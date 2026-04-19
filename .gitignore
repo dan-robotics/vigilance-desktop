@@ -1,0 +1,11 @@
+node_modules/
+build/
+dist/
+coverage/
+.DS_Store
+*.log
+.env*
+!.env.example
+.secrets.*
+src-tauri/resources/config.json
+src-tauri/target/

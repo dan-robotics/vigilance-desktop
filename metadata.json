@@ -1,0 +1,6 @@
+{
+  "name": "Vigilance",
+  "description": "A high-performance system-wide network monitor and security firewall. Watch every byte, identify every process, and take control of your connectivity.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}
