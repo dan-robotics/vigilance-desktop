@@ -9,6 +9,10 @@ use serde::{Serialize, Deserialize};
 use tauri::{AppHandle, Emitter};
 use std::cmp::Reverse;
 use std::process::Command;
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
+#[cfg(target_os = "windows")]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
 use std::collections::HashMap;
 use std::sync::{Mutex, atomic::{AtomicBool, Ordering}};
 use std::time::{Instant, Duration};
@@ -136,7 +140,7 @@ pub fn start_active_probe(app: AppHandle) {
             
             // Run netstat to get port -> PID mappings (Platform Agnostic Approach)
             let output = if cfg!(target_os = "windows") {
-                Command::new("netstat").args(["-ano", "-p", "tcp"]).output()
+                Command::new("netstat").args(["-ano", "-p", "tcp"]).creation_flags(CREATE_NO_WINDOW).output()
             } else {
                 Command::new("ss").args(["-tunp"]).output()
             };
@@ -376,15 +380,16 @@ pub async fn block_ip(ip: String) -> Result<String, String> {
     let rule_name = format!("Vigilance Block - {}", ip);
     let output = Command::new("netsh")
         .args([
-            "advfirewall", 
-            "firewall", 
-            "add", 
-            "rule", 
+            "advfirewall",
+            "firewall",
+            "add",
+            "rule",
             &format!("name={}", rule_name),
-            "dir=out", 
-            "action=block", 
+            "dir=out",
+            "action=block",
             &format!("remoteip={}", ip)
         ])
+        .creation_flags(CREATE_NO_WINDOW)
         .output()
         .map_err(|e| e.to_string())?;
 
@@ -399,6 +404,7 @@ pub async fn block_ip(ip: String) -> Result<String, String> {
 pub async fn get_firewall_rules() -> Result<Vec<String>, String> {
     let output = Command::new("netsh")
         .args(["advfirewall", "firewall", "show", "rule", "name=all"])
+        .creation_flags(CREATE_NO_WINDOW)
         .output()
         .map_err(|e| e.to_string())?;
 
@@ -421,12 +427,13 @@ pub async fn delete_firewall_rule(ip: String) -> Result<String, String> {
     let rule_name = format!("Vigilance Block - {}", ip);
     let output = Command::new("netsh")
         .args([
-            "advfirewall", 
-            "firewall", 
-            "delete", 
-            "rule", 
+            "advfirewall",
+            "firewall",
+            "delete",
+            "rule",
             &format!("name={}", rule_name)
         ])
+        .creation_flags(CREATE_NO_WINDOW)
         .output()
         .map_err(|e| e.to_string())?;
 

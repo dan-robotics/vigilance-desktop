@@ -24,9 +24,17 @@ Vigilance now features a **Hybrid Security Logic** that combines cloud intellige
 - **AI Integration**: Optionally toggle **Gemini 3 Flash** for deep behavioral analysis. It classifies connections by looking at textual intent and process metadata.
 - **Automatic Fallback**: If run outside the Tauri shell, the app falls back to high-fidelity simulation mode for UI testing.
 
-## 📜 Changelog (Production v1.0)
+## 📜 Changelog
 
-### 🚀 v1.2 - Unified Process View, Direction Fix & Security Hardening
+### 🚀 v0.2.0 - Production Hardening & Installer Polish
+
+- **Silent Subprocess Execution**: All background system commands (`netstat`, `netsh`) now use the `CREATE_NO_WINDOW` Win32 flag — the CMD window that flickered every 3 seconds in installed builds is eliminated.
+- **Installer Icon Fix**: Populated the `bundle.icon` array in `tauri.conf.json`; the MSI bundler no longer fails with "Couldn't find a .ico icon".
+- **DevTools Disabled**: The right-click inspect menu and Ctrl+Shift+I developer panel are locked out in production builds.
+- **AI Quota Visibility**: Deep Trace requests are counted and displayed in Settings. Gemini rate-limit / quota errors (HTTP 429) surface as a dismissible red banner instead of silently failing.
+- **Version Alignment**: `tauri.conf.json`, `Cargo.toml`, and `package.json` all unified at `0.2.0`.
+
+### 🚀 v0.1.2 - Unified Process View, Direction Fix & Security Hardening
 
 - **Unified Process Grouping (Live + Audit)**: The Live mode activity feed now uses the same "Smart Folder" grouped view as Audit mode. Both modes show one collapsible row per application — click to expand and reveal individual sockets with their IP, port, protocol, live KB/s rates, AI analysis, and block controls.
 - **Inbound Traffic Fix (Critical)**: Resolved a fundamental sniffer bug where all packets were incorrectly classified as `Outbound`. The Guardian Core now detects packet direction by comparing destination IP against the interface's own IP addresses — correctly identifying inbound streams (e.g. Spotify audio) and populating download metrics.
