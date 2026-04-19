@@ -1,5 +1,14 @@
 fn main() {
-    // Tell the linker to look in the project's root 'lib' folder for Packet.lib
     println!("cargo:rustc-link-search=native=../lib");
-    tauri_build::build()
+
+    let mut attributes = tauri_build::Attributes::new();
+
+    #[cfg(target_os = "windows")]
+    {
+        let windows_attributes = tauri_build::WindowsAttributes::new()
+            .app_manifest(include_str!("vigilance.manifest"));
+        attributes = attributes.windows_attributes(windows_attributes);
+    }
+
+    tauri_build::try_build(attributes).expect("Failed to run tauri-build");
 }

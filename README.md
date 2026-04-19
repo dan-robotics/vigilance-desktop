@@ -1,5 +1,7 @@
 # Vigilance-Desktop: Network Monitoring & Security Shield
 
+> **Current Release: v0.2.1** — [Changelog](./CHANGELOG.md)
+
 Vigilance-Desktop is a high-performance system-wide network monitor designed for Windows. It provides real-time visibility into network traffic, process-level analysis, and firewall management through a unified Desktop experience.
 
 ## 🏗️ Architecture
@@ -17,7 +19,7 @@ For hardware setup (Npcap), compiler linker fixes (`Packet.lib`), and driver per
 ## 🧠 Behavioral AI & Hybrid Guardian Engine
 Vigilance now features a **Hybrid Security Logic** that combines cloud intelligence with hardware-level speed:
 
-- **v1.0 Guardian Core (Local Heuristics)**: 
+- **Guardian Core (Local Heuristics)**: 
     - **Beaconing Detection**: Identification of fixed-interval heartbeats characteristic of C2 (Command & Control) malware.
     - **Protocol Mismatch**: Detection of spoofed protocols (e.g., non-HTTP traffic on port 80/443).
     - **Weighted Scoring**: Multi-factor risk analysis tracking timing, reputation, and port safety.
