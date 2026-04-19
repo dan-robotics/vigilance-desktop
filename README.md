@@ -1,4 +1,6 @@
 # Vigilance-Desktop: Network Monitoring & Security Shield
+<img width="186" height="104" alt="Vigilance App - Wide" src="https://github.com/user-attachments/assets/922172e6-254a-4c63-914e-d96cfb572608" />
+
 
 > **Current Release: v0.2.1** — [Changelog](./CHANGELOG.md)
 
