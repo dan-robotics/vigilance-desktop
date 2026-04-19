@@ -33,6 +33,9 @@
       "icons/128x128@2x.png",
       "icons/icon.ico"
     ],
+     "resources": {    
+    "resources/config.json": "config.json"
+},
     "copyright": "C 2026 Vigilance Security"
   }
 }
