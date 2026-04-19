@@ -55,5 +55,4 @@ Vigilance now features a **Hybrid Security Logic** that combines cloud intellige
 *Vigilance-Desktop - Production Grade Network Security.*
 
 ## License
-## License
 MIT License © 2026 Daniel Andries
