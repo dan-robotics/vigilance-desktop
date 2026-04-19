@@ -5,6 +5,7 @@
 - **UAC Auto-Elevation**: Embedded a Windows application manifest (`requireAdministrator`) into the binary via `winres`. The app now requests admin privileges automatically on launch — users no longer need to manually right-click "Run as Administrator" for firewall rules to take effect.
 - **Firewall Block Confirmed Working**: IP blocking via Windows Filtering Platform (`netsh advfirewall`) is fully functional when running with the correct privilege level. Rules appear in Windows Firewall within seconds of being applied.
 - **HTML Title Fix**: Replaced the placeholder "My Google AI Studio App" browser tab title with "Vigilance | Guardian Core".
+- **Portable Mode**: Added portable distribution support. When a `config/` folder exists next to `vigilance.exe` (or `--portable` flag is passed), the app reads config from `.\config\config.json` and writes logs to `.\logs\` instead of AppData. Distributed as `Vigilance-Portable-vX.X.X.zip`.
 
 ### 🚀 v0.2.0 - Production Hardening & Installer Polish
 

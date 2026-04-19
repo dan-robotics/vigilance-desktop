@@ -22,6 +22,16 @@ For hardware setup (Npcap), compiler linker fixes (`Packet.lib`), and driver per
 
 👉 **[DOCS/TROUBLESHOOTING.md](./DOCS/TROUBLESHOOTING.md)**
 
+## 📦 Installation Options
+
+| Method | File | Notes |
+|--------|------|-------|
+| Windows Installer | `Vigilance_x64_en-US.msi` | Recommended, installs to AppData |
+| NSIS Installer | `Vigilance_x64-setup.exe` | Alternate installer |
+| Portable | `Vigilance-Portable-vX.X.X.zip` | No install needed, run from any folder |
+
+**Portable mode**: unzip, place your `config\config.json` with your Gemini API key, run `vigilance.exe` as Administrator. Config and logs stay local to the folder — nothing written to AppData.
+
 ## 🧠 Behavioral AI & Hybrid Guardian Engine
 Vigilance now features a **Hybrid Security Logic** that combines cloud intelligence with hardware-level speed:
 
