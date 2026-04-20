@@ -1,6 +1,26 @@
 ## 📜 Changelog
 
-### 🚀 v0.2.1 - Auto-Elevation, Firewall Reliability & macOS Support
+### 🚀 v0.2.2 - Mock Data Removal & macOS Support
+
+- **Mock Data Removed**: Removed all hardcoded placeholder connections (fake chrome.exe, svchost.exe, discord.exe, spotify.exe, and the Russian IP 45.182.18.5) that were showing on every launch. App now starts with an empty list and fills with real traffic only.
+- **Hardcoded Alert Removed**: Removed static "IP 45.182.18.5 flagged as sinkhole" entry from the Guardian mitigations panel.
+- **macOS Support**: Full macOS support — pnet/BPF packet capture, lsof port/PID resolution, pfctl firewall blocking.
+
+#### macOS Downloads — v0.2.2
+
+| File | Platform | SHA256 |
+|---|---|---|
+| `Vigilance_0.2.2_universal.dmg` | macOS Universal (Intel + Apple Silicon) | `45037de8da259a8d33b3a02176cf1dfb6f3302aeeb9b8daa847f7740a1e8133b` |
+| `Vigilance_0.2.2_aarch64.dmg` | macOS Apple Silicon | `4341e9a39ad5a1198d3639d2e233dc8797b5f5be5546fbdaed0d5b01308e588f` |
+| `Vigilance_0.2.2_x64.dmg` | macOS Intel | `8c195088a42fd86ee306ef79fe9a7cbfbf47a4285982c8bcdf01a209589e9589` |
+| `Vigilance_0.2.2_universal.app.zip` | macOS Portable | `pending` |
+
+---
+
+### 🚀 v0.2.1 - Auto-Elevation & Firewall Reliability
+
+- **Mock Data Removed**: Removed all hardcoded placeholder connections (fake chrome.exe, svchost.exe, discord.exe, spotify.exe, and the Russian IP 45.182.18.5) that were showing on every launch. App now starts with an empty list and fills with real traffic only.
+- **Hardcoded Alert Removed**: Removed static "IP 45.182.18.5 flagged as sinkhole" entry from the Guardian mitigations panel.
 
 #### Downloads — v0.2.1
 

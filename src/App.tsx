@@ -91,13 +91,7 @@ interface TrafficData {
   up: number;
 }
 
-const MOCK_CONNECTIONS: Connection[] = [
-  { id: '1', process: 'chrome.exe', pid: 14202, remoteAddr: '172.217.16.206', remotePort: 443, download: 142, upload: 12, status: 'safe', protocol: 'TCP', location: 'United States' },
-  { id: '2', process: 'svchost.exe', pid: 4, remoteAddr: '52.142.124.215', remotePort: 443, download: 4, upload: 1, status: 'safe', protocol: 'TCP', location: 'Netherlands' },
-  { id: '3', process: 'discord.exe', pid: 9812, remoteAddr: '162.159.135.234', remotePort: 443, download: 12, upload: 8, status: 'safe', protocol: 'UDP', location: 'France' },
-  { id: '4', process: 'unknown_host', pid: 5521, remoteAddr: '45.182.18.5', remotePort: 8888, download: 0, upload: 45, status: 'suspicious', protocol: 'TCP', location: 'Russia' },
-  { id: '5', process: 'spotify.exe', pid: 1102, remoteAddr: '35.186.224.25', remotePort: 4070, download: 856, upload: 4, status: 'safe', protocol: 'TCP', location: 'United States' },
-];
+const MOCK_CONNECTIONS: Connection[] = [];
 
 const INITIAL_HISTORY: TrafficData[] = [];
 
@@ -753,12 +747,6 @@ export default function App() {
                       action="Filtered" 
                       desc="Blocked telemetry ping to MS metrics" 
                       time="2m ago"
-                     />
-                     <MitigationLog 
-                      app="Unknown" 
-                      action="Blacklisted" 
-                      desc="IP 45.182.18.5 flagged as sinkhole" 
-                      time="14m ago"
                      />
                   </div>
                 </div>

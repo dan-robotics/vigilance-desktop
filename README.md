@@ -6,7 +6,7 @@ https://github.com/user-attachments/assets/4f626fc0-d0f5-461b-8e2a-33757ab97c05
 
 
 
-> **Current Release: v0.2.1** — [Changelog](./CHANGELOG.md)
+> **Current Release: v0.2.2** — [Changelog](./CHANGELOG.md)
 
 Vigilance-Desktop is a high-performance system-wide network monitor designed for Windows. It provides real-time visibility into network traffic, process-level analysis, and firewall management through a unified Desktop experience.
 
@@ -29,10 +29,10 @@ For hardware setup (Npcap), compiler linker fixes (`Packet.lib`), and driver per
 | Windows Installer | `Vigilance_x64_en-US.msi` | Windows | Recommended, installs to AppData |
 | NSIS Installer | `Vigilance_x64-setup.exe` | Windows | Alternate installer |
 | Portable | `Vigilance-Portable-vX.X.X.zip` | Windows | No install needed, run from any folder |
-| Universal DMG | `Vigilance_0.2.1_universal.dmg` | macOS Intel + Apple Silicon | Recommended for Mac |
-| Apple Silicon DMG | `Vigilance_0.2.1_aarch64.dmg` | macOS Apple Silicon | M1/M2/M3/M4 |
-| Intel DMG | `Vigilance_0.2.1_x64.dmg` | macOS Intel | Intel Macs only |
-| macOS Portable | `Vigilance_0.2.1_universal.app.zip` | macOS | Unzip and run, no installer |
+| Universal DMG | `Vigilance_0.2.2_universal.dmg` | macOS Intel + Apple Silicon | Recommended for Mac |
+| Apple Silicon DMG | `Vigilance_0.2.2_aarch64.dmg` | macOS Apple Silicon | M1/M2/M3/M4 |
+| Intel DMG | `Vigilance_0.2.2_x64.dmg` | macOS Intel | Intel Macs only |
+| macOS Portable | `Vigilance_0.2.2_universal.app.zip` | macOS | Unzip and run, no installer |
 
 **Windows portable mode**: unzip, place your `config\config.json` with your Gemini API key, run `vigilance.exe` as Administrator. Config and logs stay local to the folder — nothing written to AppData.
 
