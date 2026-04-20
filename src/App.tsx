@@ -682,8 +682,8 @@ export default function App() {
                       <Tooltip
                         contentStyle={{ backgroundColor: '#111', border: '1px solid #333', borderRadius: '12px' }}
                         itemStyle={{ fontSize: '12px' }}
-                        formatter={(value: number, name: string) => [`${value.toFixed(3)} MB/s`, name === 'down' ? 'Download' : 'Upload']}
-                        labelFormatter={(label: string) => label}
+                        formatter={(value: unknown, name: unknown) => [`${Number(value ?? 0).toFixed(3)} MB/s`, name === 'down' ? 'Download' : 'Upload'] as [string, string]}
+                        labelFormatter={(label: unknown) => String(label ?? '')}
                       />
                       <Area
                         type="natural"
