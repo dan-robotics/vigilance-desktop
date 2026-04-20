@@ -21,7 +21,7 @@
 |                                                                      |
 |  +---------------------+       +-----------------------------+       |
 |  | SNIFFER THREAD      |       | PROCESS RESOLVER THREAD     |       |
-|  | (500ms Pulses)      |       | (Every 3s netstat Poll)     |       |
+|  | (500ms Pulses)      |       | (Every 3s Poll)             |       |
 |  |                     |       |                             |       |
 |  | - Direction detect  |       |                             |       |
 |  |   (src/dst vs       |       |                             |       |
@@ -51,11 +51,11 @@
 |          +-----------------+-------------------+                     |
 |          |                                     |                     |
 |  +-------v-----------+             +-----------v----------+          |
-|  | WFP FIREWALL      |             | NATIVE CSV EXPORT    |          |
-|  | (netsh interface) |             | (rfd Dialog)         |          |
-|  | block_ip()        |             | Traffic log +        |          |
-|  +-------------------+             | Detections log       |          |
-|                                    +----------------------+          |
+|  | FIREWALL          |             | NATIVE CSV EXPORT    |          |
+|  | Win: WFP/netsh    |             | (rfd Dialog)         |          |
+|  | Mac: pfctl + JSON |             | Traffic log +        |          |
+|  | block_ip()        |             | Detections log       |          |
+|  +-------------------+             +----------------------+          |
 +----------------------------------------------------------------------+
 ```
 
@@ -97,11 +97,13 @@ Frontend: setConnections() → groupedConnections (by process, both modes)
 
 1. **Sniffer Module**: Low-latency wrapper around the network card. Computes `local_ips` once per interface selection and classifies every packet as Inbound or Outbound by comparing the destination IP against the interface's own addresses. Uses a 500ms aggregation buffer to prevent UI stutter during high-bandwidth events.
 
-2. **Resolver Module**: Correlates network sockets with Windows Process IDs (PIDs) via periodic `netstat -ano` polling. Maps local ports → PIDs → process names. Runs every 3 seconds in a background thread, writing to a shared `PORT_MAP` Mutex.
+2. **Resolver Module**: Correlates network sockets with process IDs (PIDs) via periodic polling every 3 seconds. Uses the platform-native tool: `netstat -ano -p tcp` on Windows, `lsof -i -P -n -sTCP:LISTEN,ESTABLISHED` on macOS, `ss -tunp` on Linux. Maps local ports → PIDs → process names and writes to a shared `PORT_MAP` Mutex.
 
 3. **Runtime Config Loader**: The `get_api_key` Tauri command reads `src-tauri/resources/config.json` at runtime using `BaseDirectory::Resource`. The Gemini API key is never embedded in the JavaScript bundle.
 
-4. **Walls Module**: The "Bouncer." Communicates with the Windows Filtering Platform via `netsh advfirewall` to permanently block IPs at the OS level. Rules persist across app restarts.
+4. **Walls Module**: The "Bouncer." Platform-conditional firewall blocking:
+   - **Windows**: communicates with the Windows Filtering Platform (WFP) via `netsh advfirewall`. Rules persist at the OS level across reboots.
+   - **macOS**: applies rules via `pfctl` under the `com.vigilance.desktop` anchor. Blocked IPs are persisted in `~/.vigilance_desktop_rules.json` and reloaded on each change. Requires a one-time sudoers entry for passwordless `pfctl` access.
 
 5. **Guardian Module**: The heuristic "Brain." Calculates internal risk scores (0–100) based on IP reputation blacklist, suspicious port usage, protocol mismatches, and beaconing (fixed-interval heartbeat) detection.
 

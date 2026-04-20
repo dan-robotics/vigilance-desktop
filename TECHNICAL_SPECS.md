@@ -1,7 +1,7 @@
 # Vigilance-Desktop: Technical Specification & Architecture
 
 ## 1. Overview
-Vigilance is a professional-grade, local-first network monitoring and security suite for Windows. It provides kernel-level packet inspection, real-time process name resolution, and dynamic firewall management through a high-performance Rust backend and a polished React/Tauri frontend.
+Vigilance is a professional-grade, local-first network monitoring and security suite for Windows and macOS. It provides kernel-level packet inspection, real-time process name resolution, and dynamic firewall management through a high-performance Rust backend and a polished React/Tauri frontend.
 
 ## 2. System Architecture
 The application follows a standard **Tauri** architecture, separating the high-privilege system logic (Rust) from the user interface (React).
@@ -16,8 +16,8 @@ The application follows a standard **Tauri** architecture, separating the high-p
     *   **Heuristic Engine**: Assigns `threat_score` (0–100) based on IP reputation blacklist, suspicious ports, protocol mismatches, and beaconing (fixed-interval heartbeat timing analysis).
 
 *   **Process Resolver**:
-    *   Spawns a background thread that periodically (3s) executes `netstat -ano` (Windows) or `ss` (Linux).
-    *   Synchronizes with `sysinfo` to map active local ports directly to process names (e.g., `chrome.exe`).
+    *   Spawns a background thread that periodically (3s) polls active sockets using the platform-native tool: `netstat -ano -p tcp` (Windows), `lsof -i -P -n -sTCP:LISTEN,ESTABLISHED` (macOS), or `ss -tunp` (Linux).
+    *   Parses output to build the `PORT_MAP`: local port → `(PID, process_name)`. On macOS, the process name comes directly from the `lsof` COMMAND column; on Windows it is resolved via `sysinfo`.
     *   For inbound packets, `local_port = tcp.get_destination()` — ensuring the PORT_MAP lookup resolves to the correct listening process.
 
 *   **Runtime Config Loader**:
@@ -26,7 +26,9 @@ The application follows a standard **Tauri** architecture, separating the high-p
     *   Template for contributors: `src-tauri/resources/config.example.json`.
 
 *   **Native Firewall & Export**:
-    *   `block_ip` interfaces directly with the **Windows Filtering Platform (WFP)** via `netsh advfirewall`. Rules persist at the OS level.
+    *   `block_ip` is platform-conditional:
+        *   **Windows**: interfaces with the **Windows Filtering Platform (WFP)** via `netsh advfirewall`. Rules are written directly to the OS firewall and persist across reboots.
+        *   **macOS**: uses **`pfctl`** (pf firewall) via `sudo pfctl`. Blocked IPs are persisted in `~/.vigilance_desktop_rules.json` and reloaded into pf on each change via the `com.vigilance.desktop` anchor. Rules survive app restarts (JSON is reloaded) but require a one-time sudoers entry to run without a password prompt.
     *   `save_traffic_csv(csv_data, filename)` uses the `rfd` crate to invoke a native "Save As" dialog. Accepts both the CSV content and the suggested filename from the frontend. Three distinct export types with standardised prefixes: `vigilance_traffic_log_`, `vigilance_alerts_log_` (Notifications tab), `vigilance_heuristic_log_` (Guardian tab) — all suffixed with an ISO timestamp (`YYYY-MM-DDTHH-MM-SS`).
 
 ### 2.2 Frontend (React/TypeScript)
@@ -72,6 +74,6 @@ The application follows a standard **Tauri** architecture, separating the high-p
 
 *   **Local-First**: No raw packet data or identity information is ever transmitted to external servers.
 *   **API Key at Runtime Only**: The Gemini API key is loaded from `src-tauri/resources/config.json` at runtime via a Tauri command. It is excluded from git (`.gitignore`) and never embedded in the distributed JavaScript bundle.
-*   **Kernel Block**: WFP blocks are implemented at the OS level and persist even if the UI is closed.
-*   **Zero-Config Resolution**: Maps ports to PIDs natively without additional drivers, using built-in `netstat`/`ss` OS tools.
+*   **Kernel Block**: On Windows, WFP rules are implemented at the OS level and persist even if the UI is closed. On macOS, `pfctl` rules persist via `~/.vigilance_desktop_rules.json` and are reloaded on each app launch; a sudoers entry enables passwordless `pfctl` execution.
+*   **Zero-Config Resolution**: Maps ports to PIDs natively without additional drivers, using built-in OS tools (`netstat` on Windows, `lsof` on macOS, `ss` on Linux).
 *   **GitHub Safety**: `src-tauri/resources/config.json` and `src-tauri/target/` are git-excluded. A `config.example.json` with a placeholder key is provided for contributors.
