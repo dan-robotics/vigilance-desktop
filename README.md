@@ -24,13 +24,23 @@ For hardware setup (Npcap), compiler linker fixes (`Packet.lib`), and driver per
 
 ## 📦 Installation Options
 
-| Method | File | Notes |
-|--------|------|-------|
-| Windows Installer | `Vigilance_x64_en-US.msi` | Recommended, installs to AppData |
-| NSIS Installer | `Vigilance_x64-setup.exe` | Alternate installer |
-| Portable | `Vigilance-Portable-vX.X.X.zip` | No install needed, run from any folder |
+| Method | File | Platform | Notes |
+|--------|------|----------|-------|
+| Windows Installer | `Vigilance_x64_en-US.msi` | Windows | Recommended, installs to AppData |
+| NSIS Installer | `Vigilance_x64-setup.exe` | Windows | Alternate installer |
+| Portable | `Vigilance-Portable-vX.X.X.zip` | Windows | No install needed, run from any folder |
+| Universal DMG | `Vigilance_0.2.1_universal.dmg` | macOS Intel + Apple Silicon | Recommended for Mac |
+| Apple Silicon DMG | `Vigilance_0.2.1_aarch64.dmg` | macOS Apple Silicon | M1/M2/M3/M4 |
+| Intel DMG | `Vigilance_0.2.1_x64.dmg` | macOS Intel | Intel Macs only |
+| macOS Portable | `Vigilance_0.2.1_universal.app.zip` | macOS | Unzip and run, no installer |
 
-**Portable mode**: unzip, place your `config\config.json` with your Gemini API key, run `vigilance.exe` as Administrator. Config and logs stay local to the folder — nothing written to AppData.
+**Windows portable mode**: unzip, place your `config\config.json` with your Gemini API key, run `vigilance.exe` as Administrator. Config and logs stay local to the folder — nothing written to AppData.
+
+**macOS first-time setup**: raw packet capture requires BPF access. Run once in Terminal, then log out and back in:
+```bash
+sudo dseditgroup -o create access_bpf
+sudo dseditgroup -o edit -a $(whoami) -t user access_bpf
+```
 
 ## 🧠 Behavioral AI & Hybrid Guardian Engine
 Vigilance now features a **Hybrid Security Logic** that combines cloud intelligence with hardware-level speed:

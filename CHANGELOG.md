@@ -1,6 +1,44 @@
 ## 📜 Changelog
 
-### 🚀 v0.2.1 - Auto-Elevation & Firewall Reliability
+### 🚀 v0.2.1 - Auto-Elevation, Firewall Reliability & macOS Support
+
+#### macOS Downloads — v0.2.1
+
+| File | Platform | SHA256 |
+|---|---|---|
+| `Vigilance_0.2.1_universal.dmg` | macOS Universal (Intel + Apple Silicon) | `646d6c4d0d40c6c58c06dd569acfb093a1852766ea678389c18dff99983b4a9b` |
+| `Vigilance_0.2.1_aarch64.dmg` | macOS Apple Silicon | `3f2ec95ad400b84827ef10698158e99e49b31d84d3bc6d7e65cf062a56fbe74b` |
+| `Vigilance_0.2.1_x64.dmg` | macOS Intel | `6c41fa9f9eb73933d2164d3131e69d6bb7e87cc099f6cb7aad5f0849d29e0d77` |
+| `Vigilance_0.2.1_universal.app.zip` | macOS Portable | `pending build` |
+
+#### macOS First-Time Setup
+
+Raw packet capture requires BPF device access. Run once in Terminal:
+
+```bash
+sudo dseditgroup -o create access_bpf
+sudo dseditgroup -o edit -a $(whoami) -t user access_bpf
+```
+
+Log out and back in — the app runs normally without sudo after that.
+
+To launch manually with sudo instead:
+
+```bash
+sudo /Applications/Vigilance.app/Contents/MacOS/vigilance
+```
+
+#### macOS Firewall Blocking
+
+IP blocking uses `pfctl` and requires sudo. To allow passwordless pfctl, add to `/etc/sudoers`:
+
+```
+your_username ALL=(ALL) NOPASSWD: /sbin/pfctl
+```
+
+---
+
+
 
 - **UAC Auto-Elevation**: Embedded a Windows application manifest (`requireAdministrator`) into the binary via `winres`. The app now requests admin privileges automatically on launch — users no longer need to manually right-click "Run as Administrator" for firewall rules to take effect.
 - **Firewall Block Confirmed Working**: IP blocking via Windows Filtering Platform (`netsh advfirewall`) is fully functional when running with the correct privilege level. Rules appear in Windows Firewall within seconds of being applied.

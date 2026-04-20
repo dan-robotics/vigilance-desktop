@@ -138,21 +138,31 @@ pub fn start_active_probe(app: AppHandle) {
         loop {
             let mut new_map = HashMap::new();
             
-            // Run netstat to get port -> PID mappings (Platform Agnostic Approach)
-            let output = if cfg!(target_os = "windows") {
-                Command::new("netstat").args(["-ano", "-p", "tcp"]).creation_flags(CREATE_NO_WINDOW).output()
-            } else {
-                Command::new("ss").args(["-tunp"]).output()
-            };
+            // Port→PID resolution — platform specific
+            #[cfg(target_os = "windows")]
+            let pid_output = Command::new("netstat")
+                .args(["-ano", "-p", "tcp"])
+                .creation_flags(CREATE_NO_WINDOW)
+                .output();
+            #[cfg(target_os = "macos")]
+            let pid_output = Command::new("lsof")
+                .args(["-i", "-P", "-n", "-sTCP:LISTEN,ESTABLISHED"])
+                .output();
+            #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+            let pid_output = Command::new("ss").args(["-tunp"]).output();
 
-            if let Ok(out) = output {
+            if let Ok(out) = pid_output {
                 let stdout = String::from_utf8_lossy(&out.stdout);
+
+                #[cfg(target_os = "windows")]
                 sys.refresh_all();
-                
+
                 for line in stdout.lines() {
                     let parts: Vec<&str> = line.split_whitespace().collect();
+
+                    #[cfg(target_os = "windows")]
+                    // netstat -ano: Protocol LocalAddr RemoteAddr State PID
                     if parts.len() >= 5 {
-                        // Windows netstat -ano output: Protocol LocalAddr RemoteAddr State PID
                         if let Some(local_addr) = parts.get(1) {
                             if let Some(port_str) = local_addr.split(':').last() {
                                 if let Ok(port) = port_str.parse::<u16>() {
@@ -164,6 +174,24 @@ pub fn start_active_probe(app: AppHandle) {
                                                 .unwrap_or_else(|| "System Process".to_string());
                                             new_map.insert(port, (pid_val as u32, proc_name));
                                         }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    #[cfg(target_os = "macos")]
+                    // lsof: COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME
+                    // NAME: 192.168.1.1:port->remote:port or *:port (LISTEN)
+                    if parts.len() >= 9 && parts[0] != "COMMAND" {
+                        if let (Some(cmd), Some(pid_str), Some(name)) =
+                            (parts.get(0), parts.get(1), parts.get(8))
+                        {
+                            let local_part = name.split("->").next().unwrap_or(name);
+                            if let Some(port_str) = local_part.split(':').last() {
+                                if let Ok(port) = port_str.parse::<u16>() {
+                                    if let Ok(pid_val) = pid_str.parse::<usize>() {
+                                        new_map.insert(port, (pid_val as u32, cmd.to_string()));
                                     }
                                 }
                             }
@@ -374,20 +402,63 @@ pub fn start_active_probe(app: AppHandle) {
     });
 }
 
+// ─── macOS pfctl helpers ──────────────────────────────────────────────────────
+
+#[cfg(target_os = "macos")]
+fn get_rules_path() -> std::path::PathBuf {
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+    std::path::PathBuf::from(home).join(".vigilance_desktop_rules.json")
+}
+
+#[cfg(target_os = "macos")]
+fn load_blocked_ips() -> Vec<String> {
+    std::fs::read_to_string(get_rules_path())
+        .ok()
+        .and_then(|d| serde_json::from_str(&d).ok())
+        .unwrap_or_default()
+}
+
+#[cfg(target_os = "macos")]
+fn save_blocked_ips(ips: &[String]) {
+    if let Ok(json) = serde_json::to_string(ips) {
+        let _ = std::fs::write(get_rules_path(), json);
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn apply_pf_rules(ips: &[String]) -> bool {
+    if ips.is_empty() {
+        return Command::new("sudo")
+            .args(["pfctl", "-a", "com.vigilance.desktop", "-F", "rules"])
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+    }
+    let rules: String = ips.iter()
+        .map(|ip| format!("block out quick from any to {}\n", ip))
+        .collect();
+    if std::fs::write("/tmp/vigilance_desktop.pf", &rules).is_err() {
+        return false;
+    }
+    Command::new("sudo")
+        .args(["pfctl", "-a", "com.vigilance.desktop", "-f", "/tmp/vigilance_desktop.pf"])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+// ─── Firewall commands — Windows ─────────────────────────────────────────────
+
+#[cfg(target_os = "windows")]
 #[tauri::command]
 pub async fn block_ip(ip: String) -> Result<String, String> {
-    // WFP Firewall Backend via netsh
     let rule_name = format!("Vigilance Block - {}", ip);
     let output = Command::new("netsh")
         .args([
-            "advfirewall",
-            "firewall",
-            "add",
-            "rule",
+            "advfirewall", "firewall", "add", "rule",
             &format!("name={}", rule_name),
-            "dir=out",
-            "action=block",
-            &format!("remoteip={}", ip)
+            "dir=out", "action=block",
+            &format!("remoteip={}", ip),
         ])
         .creation_flags(CREATE_NO_WINDOW)
         .output()
@@ -400,6 +471,7 @@ pub async fn block_ip(ip: String) -> Result<String, String> {
     }
 }
 
+#[cfg(target_os = "windows")]
 #[tauri::command]
 pub async fn get_firewall_rules() -> Result<Vec<String>, String> {
     let output = Command::new("netsh")
@@ -410,7 +482,6 @@ pub async fn get_firewall_rules() -> Result<Vec<String>, String> {
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let mut rules = Vec::new();
-    
     for line in stdout.lines() {
         if line.contains("Vigilance Block -") {
             if let Some(ip) = line.split('-').last() {
@@ -418,20 +489,17 @@ pub async fn get_firewall_rules() -> Result<Vec<String>, String> {
             }
         }
     }
-    
     Ok(rules)
 }
 
+#[cfg(target_os = "windows")]
 #[tauri::command]
 pub async fn delete_firewall_rule(ip: String) -> Result<String, String> {
     let rule_name = format!("Vigilance Block - {}", ip);
     let output = Command::new("netsh")
         .args([
-            "advfirewall",
-            "firewall",
-            "delete",
-            "rule",
-            &format!("name={}", rule_name)
+            "advfirewall", "firewall", "delete", "rule",
+            &format!("name={}", rule_name),
         ])
         .creation_flags(CREATE_NO_WINDOW)
         .output()
@@ -441,6 +509,42 @@ pub async fn delete_firewall_rule(ip: String) -> Result<String, String> {
         Ok(format!("Rule for {} deleted successfully.", ip))
     } else {
         Err(String::from_utf8_lossy(&output.stderr).to_string())
+    }
+}
+
+// ─── Firewall commands — macOS ────────────────────────────────────────────────
+
+#[cfg(target_os = "macos")]
+#[tauri::command]
+pub async fn block_ip(ip: String) -> Result<String, String> {
+    let mut ips = load_blocked_ips();
+    if !ips.contains(&ip) {
+        ips.push(ip.clone());
+        save_blocked_ips(&ips);
+    }
+    if apply_pf_rules(&ips) {
+        Ok(format!("Guardian Rule Active: IP {} is now blacklisted.", ip))
+    } else {
+        Err("Failed to apply pf rule — app requires sudo for firewall blocking".to_string())
+    }
+}
+
+#[cfg(target_os = "macos")]
+#[tauri::command]
+pub async fn get_firewall_rules() -> Result<Vec<String>, String> {
+    Ok(load_blocked_ips())
+}
+
+#[cfg(target_os = "macos")]
+#[tauri::command]
+pub async fn delete_firewall_rule(ip: String) -> Result<String, String> {
+    let mut ips = load_blocked_ips();
+    ips.retain(|i| i != &ip);
+    save_blocked_ips(&ips);
+    if apply_pf_rules(&ips) {
+        Ok(format!("Rule for {} deleted successfully.", ip))
+    } else {
+        Err("Failed to reload pf rules".to_string())
     }
 }
 
