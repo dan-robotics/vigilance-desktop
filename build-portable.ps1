@@ -2,7 +2,7 @@
 # Usage: .\build-portable.ps1
 # Output: Vigilance-Portable.zip
 
-$version = "0.2.1"
+$version = "0.2.2"
 $exeSource = "src-tauri\target\release\vigilance.exe"
 $outDir = "Vigilance-Portable"
 $zipName = "Vigilance-Portable-v$version.zip"
