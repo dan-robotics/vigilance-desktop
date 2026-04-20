@@ -22,17 +22,6 @@
 - **Mock Data Removed**: Removed all hardcoded placeholder connections (fake chrome.exe, svchost.exe, discord.exe, spotify.exe, and the Russian IP 45.182.18.5) that were showing on every launch. App now starts with an empty list and fills with real traffic only.
 - **Hardcoded Alert Removed**: Removed static "IP 45.182.18.5 flagged as sinkhole" entry from the Guardian mitigations panel.
 
-#### Downloads — v0.2.1
-
-| File | Platform | SHA256 |
-|---|---|---|
-| `Vigilance_0.2.1_x64_en-US.msi` | Windows x64 Installer | `9dc2a8d91cd86c212b456c8e4743cf0c0085ebec7b73aab752114dc0be7c87c3` |
-| `Vigilance_0.2.1_x64-setup.exe` | Windows x64 NSIS | `16c2e9b2a2f0067c79d1eb1c1172078bd2c22664359d7afd7ba0e60b274ec089` |
-| `Vigilance_0.2.1_universal.dmg` | macOS Universal (Intel + Apple Silicon) | `646d6c4d0d40c6c58c06dd569acfb093a1852766ea678389c18dff99983b4a9b` |
-| `Vigilance_0.2.1_aarch64.dmg` | macOS Apple Silicon | `3f2ec95ad400b84827ef10698158e99e49b31d84d3bc6d7e65cf062a56fbe74b` |
-| `Vigilance_0.2.1_x64.dmg` | macOS Intel | `6c41fa9f9eb73933d2164d3131e69d6bb7e87cc099f6cb7aad5f0849d29e0d77` |
-| `Vigilance_0.2.1_universal.app.zip` | macOS Portable | `3e0ca184f35fd14c7d096367faff872842bb7dc14709ce7cf35ad3b258210078` |
-
 #### macOS First-Time Setup
 
 Raw packet capture requires BPF device access. Run once in Terminal:
