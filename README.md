@@ -12,6 +12,18 @@ The project is a full-stack **Tauri** desktop application:
 1. **Frontend (React + Vite)**: A "Professional Polish" dashboard that displays network intelligence and security alerts. Features a new static-width optimized layout for high-density monitoring.
 2. **Backend (Rust Guardian Core)**: A kernel-level system probe in `src-tauri`. It leverages the `pnet` crate for packet capture and now includes specific decoding for non-TCP/UDP protocols.
 
+## 🚀 Running on macOS (Admin Privileges)
+
+To capture live packets, the backend requires access to BPF devices. You have two options:
+
+### Option A: Grant BPF Access (Recommended)
+This allows the sniffer to work without running the entire UI as root. Run this once per boot:
+```bash
+sudo chown $(whoami) /dev/bpf*
+
+If you prefer not to touch BPF permissions, run the binary with escalated privileges:
+sudo -E ./node_modules/.bin/tauri dev
+
 ## 💎 v1.0.1 Key Highlights
 
 - **Kernel Transparency**: Transitioned from a generic "Guardian Kernel" label to specific decoding for **ICMP, IGMP, OSPF, and GRE** traffic.
