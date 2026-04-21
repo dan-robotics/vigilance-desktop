@@ -49,6 +49,13 @@ async function getAiClient(): Promise<GoogleGenAI> {
   return aiClient;
 }
 
+// --- GeoIP helpers ---
+function buildLocationLabel(geo: { city?: string; region?: string; country_code?: string; asn?: string; org?: string }): string {
+  const parts = [geo.city, geo.region, geo.country_code].filter(Boolean).join(', ');
+  const suffix = geo.asn ? ` — ${geo.asn} ${geo.org}` : geo.org ? ` — ${geo.org}` : '';
+  return parts ? `${parts}${suffix}` : (geo.org || '');
+}
+
 // --- Local fallback explanation (no API key required) ---
 // Used when cloud AI is disabled or unavailable. Builds a human-readable
 // assessment from GeoIP org/country, port semantics, and the heuristic reason.
@@ -96,17 +103,26 @@ function localExplain(ip: string, port: number, protocol: string, location: stri
 
 // --- Types ---
 
+interface GeoInfo {
+  city: string;
+  region: string;
+  country_code: string;
+  asn: string;
+  org: string;
+}
+
 interface Connection {
   id: string;
   process: string;
   pid: number;
   remoteAddr: string;
   remotePort: number;
-  download: number; // KB/s
-  upload: number;   // KB/s
+  download: number; // MB/s
+  upload: number;   // MB/s
   status: 'safe' | 'suspicious' | 'blocked';
   protocol: string;
   location: string;
+  geoInfo?: GeoInfo;
   threatLabel: string;
 }
 
@@ -120,6 +136,7 @@ interface NetworkEvent {
   direction: string;
   threat_score: number;
   threat_label: string;
+  geo_info?: GeoInfo;
 }
 
 interface FirewallRule {
@@ -154,7 +171,7 @@ export default function App() {
   const [isGuardianActive, setIsGuardianActive] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [isDesktop, setIsDesktop] = useState(false);
-  const [useCloudAi, setUseCloudAi] = useState(true);
+  const [useCloudAi, setUseCloudAi] = useState(false);
   const [aiRequestCount, setAiRequestCount] = useState(0);
   const [aiQuotaError, setAiQuotaError] = useState<string | null>(null);
   const [captureError, setCaptureError] = useState<string | null>(null);
@@ -163,7 +180,18 @@ export default function App() {
   const [firewallRules, setFirewallRules] = useState<string[]>([]);
   const [availableInterfaces, setAvailableInterfaces] = useState<InterfaceInfo[]>([]);
   const [selectedInterface, setSelectedInterface] = useState<string>('');
-  const [detections, setDetections] = useState<{id: string, ip: string, port: number, reason: string, score: number, time: string, location: string, aiNote: string | null}[]>([]);
+  const [detections, setDetections] = useState<{
+    id: string, 
+    ip: string, 
+    port: number, 
+    protocol: string, 
+    reason: string, 
+    score: number, 
+    time: string, 
+    location: string, 
+    geoInfo?: GeoInfo,
+    aiNote: string | null
+  }[]>([]);
   const [sortKey, setSortKey] = useState<keyof Connection | null>(null);
   const [groupSortKey, setGroupSortKey] = useState<'process' | 'pid' | 'endpoints' | 'dataRate' | null>(null);
   const [groupSortDir, setGroupSortDir] = useState<'asc' | 'desc'>('asc');
@@ -173,7 +201,7 @@ export default function App() {
   const [upRateMBps, setUpRateMBps] = useState(0);
   const sessionTotalDownRef = useRef(0);
   const sessionTotalUpRef = useRef(0);
-  const geoCacheRef = useRef<Record<string, string>>({});
+  const geoCacheRef = useRef<Record<string, GeoInfo>>({});
   const detectionCooldownRef = useRef<Set<string>>(new Set());
   const useCloudAiRef = useRef(useCloudAi);
   const [isFilterOpen, setIsFilterOpen] = useState(false);
@@ -296,11 +324,14 @@ export default function App() {
   );
 
   const formatDataSize = (bytes: number) => {
-    if (bytes === 0) return '0 B';
-    const k = 1024;
-    const sizes = ['B', 'KB', 'MB', 'GB', 'TB', 'PB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+    if (bytes === 0) return '0.00 MB';
+    const mb = bytes / (1024 * 1024);
+    if (mb < 0.01) return '0.00 MB';
+    return mb.toFixed(2) + ' MB';
+  };
+
+  const formatRate = (rateMBps: number) => {
+    return rateMBps.toFixed(2) + ' MB/s';
   };
 
   const csvTimestamp = () => new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-');
@@ -334,7 +365,7 @@ export default function App() {
 
   const exportToCsv = async () => {
     const filename = `vigilance_traffic_log_${csvTimestamp()}.csv`;
-    const headers = ['Process', 'PID', 'Remote Address', 'Remote Port', 'Protocol', 'Status', 'Download (KB/s)', 'Upload (KB/s)'];
+    const headers = ['Process', 'PID', 'Remote Address', 'Remote Port', 'Protocol', 'Status', 'Download (MB/s)', 'Upload (MB/s)'];
     const rows = finalFilteredConnections.map(c => [
       c.process,
       c.pid,
@@ -342,8 +373,8 @@ export default function App() {
       c.remotePort,
       c.protocol,
       c.status,
-      c.download.toFixed(2),
-      c.upload.toFixed(2)
+      c.download.toFixed(3),
+      c.upload.toFixed(3)
     ]);
 
     const csvContent = [headers, ...rows].map(e => e.join(",")).join("\n");
@@ -451,7 +482,7 @@ export default function App() {
       setAiRequestCount((prev: number) => prev + 1);
       setAiQuotaError(null);
       const response = await ai.models.generateContent({
-        model: 'gemini-3-flash-preview',
+        model: 'gemini-2.0-flash',
         contents: `Analyze this network connection and tell me if it looks like a threat or normal behavior: 
         Process: ${conn.process}, Remote IP: ${conn.remoteAddr}, Port: ${conn.remotePort}, Protocol: ${conn.protocol}. 
         Return a short 1-sentence assessment.`,
@@ -525,6 +556,29 @@ export default function App() {
               };
             });
 
+            // GeoIP: backend resolves asynchronously; cache on first arrival and backfill existing cards
+            const geoIp = data.remote_addr;
+            const backendGeo = data.geo_info;
+            const alreadyCached = !!geoCacheRef.current[geoIp];
+
+            if (backendGeo) {
+              geoCacheRef.current[geoIp] = backendGeo;
+            }
+            const geoInfo: GeoInfo | undefined = geoCacheRef.current[geoIp];
+            const locationLabel = geoInfo ? buildLocationLabel(geoInfo) : '';
+
+            // First time geo resolves for this IP — backfill connections + detection cards
+            if (backendGeo && !alreadyCached) {
+              const label = buildLocationLabel(backendGeo);
+              setConnections(prev => prev.map(c =>
+                c.remoteAddr === geoIp ? { ...c, location: label, geoInfo: backendGeo } : c
+              ));
+              setDetections(prev => prev.map(d => {
+                if (d.ip !== geoIp) return d;
+                return { ...d, location: label, geoInfo: backendGeo, aiNote: localExplain(d.ip, d.port, d.protocol, label, d.reason) };
+              }));
+            }
+
             setConnections(prev => {
               // Extract the base connection to update or add
               const existingIdx = prev.findIndex(c => c.remoteAddr === data.remote_addr && c.remotePort === data.remote_port);
@@ -535,11 +589,19 @@ export default function App() {
                 pid: data.pid || 0,
                 remoteAddr: data.remote_addr,
                 remotePort: data.remote_port,
-                download: data.direction === 'Inbound' ? (data.bytes / 1024) * 2 : 0,
-                upload: data.direction === 'Outbound' ? (data.bytes / 1024) * 2 : 0,
+                // If this event has traffic in one direction, update it. 
+                // For the other direction, we keep the old value but decay it slightly 
+                // to avoid flickering while still allowing it to reach 0 if traffic stops.
+                download: data.direction === 'Inbound' 
+                  ? (data.bytes / (1024 * 1024)) * 2 
+                  : (existingIdx >= 0 ? prev[existingIdx].download * 0.5 : 0),
+                upload: data.direction === 'Outbound' 
+                  ? (data.bytes / (1024 * 1024)) * 2 
+                  : (existingIdx >= 0 ? prev[existingIdx].upload * 0.5 : 0),
                 status: data.threat_score >= 45 ? 'suspicious' : 'safe',
                 protocol: data.protocol,
-                location: existingIdx >= 0 ? prev[existingIdx].location : '',
+                location: locationLabel || (existingIdx >= 0 ? prev[existingIdx].location : ''),
+                geoInfo: geoInfo || (existingIdx >= 0 ? prev[existingIdx].geoInfo : undefined),
                 threatLabel: data.threat_label || 'Verified Stream'
               };
 
@@ -555,29 +617,6 @@ export default function App() {
               }
             });
 
-
-            // GeoIP lookup — fire once per unique IP, cache results
-            const geoIp = data.remote_addr;
-            if (!geoCacheRef.current[geoIp]) {
-              geoCacheRef.current[geoIp] = 'resolving';
-              fetch(`https://ipinfo.io/${geoIp}/json`)
-                .then(r => r.json())
-                .then((geo: { city?: string; region?: string; country?: string; org?: string }) => {
-                  const parts = [geo.city, geo.region, geo.country].filter(Boolean).join(', ');
-                  const label = parts ? `${parts}${geo.org ? ` — ${geo.org}` : ''}` : 'Unknown Location';
-                  geoCacheRef.current[geoIp] = label;
-                  setConnections(prev => prev.map(c => c.remoteAddr === geoIp ? { ...c, location: label } : c));
-                  setDetections(prev => prev.map(d => {
-                    if (d.ip !== geoIp) return d;
-                    if (!d.location && d.aiNote && !useCloudAiRef.current) {
-                      return { ...d, location: label, aiNote: localExplain(d.ip, d.port, '', label, d.reason) };
-                    }
-                    return { ...d, location: label };
-                  }));
-                })
-                .catch(() => { geoCacheRef.current[geoIp] = ''; });
-            }
-
             // Update Guardian Detections — deduplicated per IP+reason (60s cooldown), with GeoIP + auto-AI
             if (data.threat_score >= 45) {
               const dedupKey = `${data.remote_addr}:${data.threat_label}`;
@@ -587,18 +626,19 @@ export default function App() {
 
                 const detId = Math.random().toString(36).substr(2, 9);
                 const detIp = data.remote_addr;
-                const cached = geoCacheRef.current[detIp];
-                const detLocation = (cached && cached !== 'resolving') ? cached : '';
+                const detLocation = locationLabel;
 
                 setDetections(prev => [{
                   id: detId,
                   ip: detIp,
                   port: data.remote_port,
+                  protocol: data.protocol,
                   reason: data.threat_label,
                   score: data.threat_score,
                   time: new Date().toLocaleTimeString(),
                   location: detLocation,
-                  aiNote: null,
+                  geoInfo: geoInfo,
+                  aiNote: localExplain(detIp, data.remote_port, data.protocol, detLocation, data.threat_label),
                 }, ...prev].slice(0, 50));
 
                 const applyNote = (note: string) =>
@@ -608,22 +648,12 @@ export default function App() {
                   getAiClient()
                     .then(ai => ai.models.generateContent({
                       model: 'gemini-2.0-flash',
-                      contents: `Network security alert: IP ${detIp}:${data.remote_port} (${data.protocol}), process "${data.process || 'unknown'}". Detection reason: ${data.threat_label}. In 1-2 sentences, identify what this IP likely belongs to (cloud provider, CDN, ISP, hosting provider, or known service) and whether this traffic is likely benign or worth investigating.`,
-                      config: {
-                        responseMimeType: "application/json",
-                        responseSchema: {
-                          type: Type.OBJECT,
-                          properties: { explanation: { type: Type.STRING } },
-                          required: ["explanation"]
-                        }
-                      }
+                      contents: `Analyze this network activity: IP ${detIp}:${data.remote_port} (${data.protocol}), process "${data.process || 'unknown'}". Detection reason: ${data.threat_label}. Location: ${detLocation}. In 1-2 sentences, identify what this IP likely belongs to and whether this traffic is likely benign or worth investigating.`
                     }))
                     .then(response => {
-                      const result = JSON.parse(response.text || '{}');
-                      if (result.explanation) applyNote(result.explanation);
+                      applyNote(response.text || 'Analysis complete.');
                     })
                     .catch(() => {
-                      // Gemini failed (quota, network, bad key) — fall back to local engine
                       applyNote(localExplain(detIp, data.remote_port, data.protocol, detLocation, data.threat_label));
                     });
                 } else {
@@ -756,38 +786,45 @@ export default function App() {
               >
             
             {/* Top Stat Cards */}
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-              <StatCard
-                label="Downstream"
-                value={formatDataSize(sessionTotalDown)}
-                icon={<ArrowDown className="text-emerald-500" />}
-                trend={`${downRateMBps.toFixed(2)} MB/s`}
-                trendLabel="Current Rate"
-                onClick={() => setSortKey('download')}
-                active={sortKey === 'download'}
-              />
-              <StatCard
-                label="Upstream"
-                value={formatDataSize(sessionTotalUp)}
-                icon={<ArrowUp className="text-blue-500" />}
-                trend={`${upRateMBps.toFixed(2)} MB/s`}
-                trendLabel="Current Rate"
-                onClick={() => setSortKey('upload')}
-                active={sortKey === 'upload'}
-              />
-              <StatCard 
-                label="Active Streams" 
-                value={stats.activeConnections.toString()} 
-                icon={<Activity className="text-purple-500" />} 
-                onClick={() => setSortKey(null)}
-              />
-              <StatCard 
-                label="Guardian Mitigations" 
-                value={stats.threatsBlocked.toString()} 
-                icon={<Shield className="text-amber-500" />} 
-                trend="2.4k Total"
-              />
-            </div>
+              <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+                <StatCard
+                  label="Download"
+                  value={formatDataSize(sessionTotalDown)}
+                  icon={<ArrowDown className="text-emerald-500" />}
+                  trend={formatRate(downRateMBps)}
+                  trendLabel="Rate"
+                  onClick={() => setSortKey('download')}
+                  active={sortKey === 'download'}
+                />
+                <StatCard
+                  label="Upload"
+                  value={formatDataSize(sessionTotalUp)}
+                  icon={<ArrowUp className="text-blue-500" />}
+                  trend={formatRate(upRateMBps)}
+                  trendLabel="Rate"
+                  onClick={() => setSortKey('upload')}
+                  active={sortKey === 'upload'}
+                />
+                <StatCard
+                  label="Total Traffic"
+                  value={formatDataSize(sessionTotalDown + sessionTotalUp)}
+                  icon={<Zap className="text-pink-500" />}
+                  trend={formatRate(downRateMBps + upRateMBps)}
+                  trendLabel="Combined Rate"
+                />
+                <StatCard 
+                  label="Active Streams" 
+                  value={stats.activeConnections.toString()} 
+                  icon={<Activity className="text-purple-500" />} 
+                  onClick={() => setSortKey(null)}
+                />
+                <StatCard 
+                  label="Guardian Blocked" 
+                  value={stats.threatsBlocked.toString()} 
+                  icon={<Shield className="text-amber-500" />} 
+                  trend="Cloud Active"
+                />
+              </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
               {/* Main Graph */}
@@ -1060,12 +1097,12 @@ export default function App() {
                                 <div className="flex flex-col items-end gap-0.5">
                                   <div className="flex items-center gap-1.5">
                                     <ArrowDown className="w-3 h-3 text-emerald-500" />
-                                    <span className="text-xs font-mono text-emerald-500">{group.totalDownload.toFixed(1)} <span className="text-[9px] opacity-60">KB/s</span></span>
+                                    <span className="text-xs font-mono text-emerald-500">{formatRate(group.totalDownload)}</span>
                                   </div>
                                   <span className="text-[10px] font-mono text-slate-500">{formatDataSize(group.totalDownBytes)} total ↓</span>
                                   <div className="flex items-center gap-1.5 mt-0.5">
                                     <ArrowUp className="w-3 h-3 text-blue-500" />
-                                    <span className="text-xs font-mono text-blue-500">{group.totalUpload.toFixed(1)} <span className="text-[9px] opacity-60">KB/s</span></span>
+                                    <span className="text-xs font-mono text-blue-500">{formatRate(group.totalUpload)}</span>
                                   </div>
                                   <span className="text-[10px] font-mono text-slate-500">{formatDataSize(group.totalUpBytes)} total ↑</span>
                                 </div>
@@ -1092,7 +1129,12 @@ export default function App() {
                                   <span className="text-xs text-slate-600 font-mono">Port {conn.remotePort}</span>
                                 </td>
                                 <td className="px-6 py-2 text-right">
-                                  <span className="text-[10px] text-slate-600">{formatDataSize(conn.download * 1024)}</span>
+                                  <span className="text-[10px] text-slate-600 font-mono flex items-center justify-end gap-1">
+                                    <ArrowDown className="w-2.5 h-2.5" /> {formatRate(conn.download)}
+                                  </span>
+                                  <span className="text-[10px] text-slate-600 font-mono flex items-center justify-end gap-1">
+                                    <ArrowUp className="w-2.5 h-2.5" /> {formatRate(conn.upload)}
+                                  </span>
                                 </td>
                                 <td className="px-6 py-2"></td>
                               </motion.tr>
@@ -1161,12 +1203,12 @@ export default function App() {
                                 <div className="flex flex-col items-end gap-0.5">
                                   <div className="flex items-center gap-1.5">
                                     <ArrowDown className="w-3 h-3 text-emerald-500" />
-                                    <span className="text-sm font-mono text-emerald-500">{group.totalDownload.toFixed(1)} <span className="text-[10px] opacity-60">KB/s</span></span>
+                                    <span className="text-sm font-mono text-emerald-500">{formatRate(group.totalDownload)}</span>
                                   </div>
                                   <span className="text-[10px] font-mono text-slate-500">{formatDataSize(group.totalDownBytes)} ↓</span>
                                   <div className="flex items-center gap-1.5 mt-0.5">
                                     <ArrowUp className="w-3 h-3 text-blue-500" />
-                                    <span className="text-sm font-mono text-blue-500">{group.totalUpload.toFixed(1)} <span className="text-[10px] opacity-60">KB/s</span></span>
+                                    <span className="text-sm font-mono text-blue-500">{formatRate(group.totalUpload)}</span>
                                   </div>
                                   <span className="text-[10px] font-mono text-slate-500">{formatDataSize(group.totalUpBytes)} ↑</span>
                                 </div>
@@ -1203,10 +1245,15 @@ export default function App() {
                                 <td className="px-4 py-2 overflow-hidden">
                                   <div className="flex flex-col min-w-0">
                                     <span className="text-xs text-slate-300 font-mono truncate">{conn.remoteAddr}</span>
-                                    {conn.location && conn.location !== 'resolving' && (
-                                      <span className="text-[9px] text-slate-500 flex items-center gap-1 truncate" title={conn.location}>
-                                        <Globe className="w-2.5 h-2.5 shrink-0" /> {shortGeo(conn.location)}
-                                      </span>
+                                    {conn.geoInfo && (
+                                      <div className="flex flex-col gap-0.5">
+                                        <span className="text-[9px] text-slate-500 flex items-center gap-1 truncate" title={conn.location}>
+                                          <Globe className="w-2.5 h-2.5 shrink-0" /> {conn.geoInfo.country_code} — {conn.geoInfo.city}, {conn.geoInfo.region}
+                                        </span>
+                                        <span className="text-[9px] text-emerald-500/70 font-bold uppercase tracking-widest truncate">
+                                          {conn.geoInfo.asn} {conn.geoInfo.org}
+                                        </span>
+                                      </div>
                                     )}
                                     <span className={cn(
                                       "text-[9px] font-bold uppercase tracking-wider flex items-center gap-1 truncate",
@@ -1232,10 +1279,10 @@ export default function App() {
                                 <td className="px-4 py-2 text-right">
                                   <div className="flex flex-col items-end">
                                     <span className="text-xs font-mono text-emerald-500/70 flex items-center gap-1">
-                                      <ArrowDown className="w-2.5 h-2.5" /> {conn.download.toFixed(2)} <span className="text-[9px] opacity-60">KB/s</span>
+                                      <ArrowDown className="w-2.5 h-2.5" /> {formatRate(conn.download)}
                                     </span>
                                     <span className="text-xs font-mono text-blue-500/70 flex items-center gap-1">
-                                      <ArrowUp className="w-2.5 h-2.5" /> {conn.upload.toFixed(2)} <span className="text-[9px] opacity-60">KB/s</span>
+                                      <ArrowUp className="w-2.5 h-2.5" /> {formatRate(conn.upload)}
                                     </span>
                                   </div>
                                 </td>
@@ -1321,9 +1368,9 @@ export default function App() {
                                   From <span className="font-mono text-slate-300">{det.ip}</span>
                                   {det.port > 0 && <span className="font-mono text-slate-600">:{det.port}</span>}
                                 </span>
-                                {det.location && (
-                                  <span className="text-[10px] text-slate-400 flex items-center gap-1">
-                                    <Globe className="w-3 h-3 shrink-0" /> {det.location}
+                                {det.geoInfo && (
+                                  <span className="text-[10px] text-slate-400 flex items-center gap-1 bg-white/5 px-2 py-0.5 rounded-lg">
+                                    <Globe className="w-3 h-3 shrink-0" /> {det.geoInfo.country_code} · {det.geoInfo.asn} · {det.geoInfo.org}
                                   </span>
                                 )}
                               </div>

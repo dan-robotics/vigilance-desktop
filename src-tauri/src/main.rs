@@ -60,7 +60,33 @@ fn main() {
             sniffer::save_traffic_csv
         ])
         .setup(|app| {
-            // Start the network probe with access to the v2 app handle
+            // macOS: custom app menu with About dialog showing version + MIT license
+            #[cfg(target_os = "macos")]
+            {
+                use tauri::menu::{AboutMetadata, MenuBuilder, SubmenuBuilder};
+                let about = AboutMetadata {
+                    name:      Some("Vigilance".into()),
+                    version:   Some("2.0.1".into()),
+                    copyright: Some("© 2026 Daniel Andries".into()),
+                    license:   Some("MIT License\n\nCopyright © 2026 Daniel Andries\n\nPermission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the \"Software\"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.".into()),
+                    authors:   Some(vec!["Daniel Andries".into()]),
+                    ..Default::default()
+                };
+                let app_menu = SubmenuBuilder::new(app, "Vigilance")
+                    .about(Some(about))
+                    .separator()
+                    .services()
+                    .separator()
+                    .hide()
+                    .hide_others()
+                    .show_all()
+                    .separator()
+                    .quit()
+                    .build()?;
+                let menu = MenuBuilder::new(app).item(&app_menu).build()?;
+                app.set_menu(menu)?;
+            }
+
             sniffer::start_active_probe(app.handle().clone());
             Ok(())
         })

@@ -1,5 +1,38 @@
 ## 📜 Changelog
 
+### 🚀 v2.0.1 — The Network Clarity Update
+
+#### IPv6 Support (Critical)
+- **Full IPv6 Packet Capture**: The sniffer now dispatches on Ethernet EtherType (`0x0800` IPv4 / `0x86DD` IPv6) before parsing. Previously, IPv6 frames were silently misread as garbage IPv4 packets — causing streaming traffic from Apple CDN, Netflix, Cloudflare, and all QUIC/HTTP3 services to be entirely invisible or wrongly counted as upload. All modern CDNs default to IPv6, so this was the root cause of near-zero download readings.
+- **TCP/UDP port extraction in IPv6**: Ports are now correctly extracted from TCP and UDP headers inside IPv6 frames, enabling process attribution and flow tracking on IPv6 connections.
+
+#### Direction Detection Fix
+- **Promiscuous mode filter**: BPF on macOS captures all frames on the LAN segment, including unicast traffic destined for other devices (Apple TV box, phones, etc.). Packets where neither source nor destination matches the Mac's own IP are now skipped — eliminating other devices' traffic from being counted as this machine's upload.
+- **Correct direction logic**: Only packets involving this machine's IPs are counted. Inbound = `dst` matches local IP (Download). Outbound = `src` matches local IP (Upload).
+
+#### GeoIP — Rebuilt
+- **IPv6 IPs now resolved**: The GeoIP queue previously only accepted IPv4 addresses (`parse::<Ipv4Addr>()`). IPv6 addresses were silently skipped — meaning all connections to modern CDNs (Apple, Netflix, Google, Cloudflare) showed no ASN, org, or country. Fixed: both public IPv4 and public IPv6 addresses are now queued.
+- **Concurrent lookups**: GeoIP resolution is now parallel — up to 8 IPs resolve simultaneously via `tokio::spawn`. Previous sequential processing (8 IPs × 5s timeout = 40s/batch) meant resolution always finished after the connection was gone.
+- **ip-api.com fallback**: If ipinfo.io fails or returns empty data, falls back to ip-api.com automatically.
+- **No more "Resolving…" ghost text**: Removed the `city: "Resolving..."` placeholder that was inserted into `GEO_CACHE` while lookup was in progress. Detection cards were building their AI note from this placeholder, producing "located in Resolving..." in every alert. Now nothing is written to the cache until real data arrives.
+- **User-Agent header**: Added `User-Agent: Vigilance/1.0` to prevent anonymous-bot rate limiting.
+
+#### AI Notes — Fixed
+- Removed frontend `fetch('https://ipinfo.io/...')` from the webview — GeoIP is now 100% handled by the Rust backend. The webview fetch was failing silently (CORS/sandbox) and polluting `geoCacheRef` with stale state.
+- Detection cards now regenerate `aiNote` immediately when backend GeoIP first arrives for an IP (backfill pass).
+- Fixed Gemini model name: `gemini-3-flash-preview` → `gemini-2.0-flash`.
+
+#### Memory Safety
+- **`GEO_CACHE` capped at 2000 entries** — evicts 500 oldest when full. Previously unbounded.
+- **`connection_history` capped at 5000 entries** — evicts oldest key at limit. Previously unbounded.
+
+#### App & Distribution
+- **macOS About dialog**: Clicking "About Vigilance" in the app menu shows name, version, copyright, and full MIT license text.
+- **Version unified to 2.0.1** across `Cargo.toml`, `tauri.conf.json`, and `package.json`.
+- **package.json name** corrected from `react-example` to `vigilance`.
+
+---
+
 ### 🚀 v1.0.1 — The Intelligence Update
 
 #### Protocol Intelligence

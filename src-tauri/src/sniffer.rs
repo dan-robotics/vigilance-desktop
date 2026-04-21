@@ -1,7 +1,8 @@
 use pnet::datalink::{self, Channel::Ethernet};
-use pnet::packet::ethernet::EthernetPacket;
+use pnet::packet::ethernet::{EthernetPacket, EtherTypes};
 use pnet::packet::ip::IpNextHeaderProtocols;
 use pnet::packet::ipv4::Ipv4Packet;
+use pnet::packet::ipv6::Ipv6Packet;
 use pnet::packet::tcp::TcpPacket;
 use pnet::packet::udp::UdpPacket;
 use pnet::packet::Packet;
@@ -13,7 +14,7 @@ use std::process::Command;
 use std::os::windows::process::CommandExt;
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Mutex, atomic::{AtomicBool, Ordering}};
 use std::time::{Instant, Duration};
 
@@ -22,6 +23,8 @@ lazy_static::lazy_static! {
     static ref HEURISTICS_ENABLED: AtomicBool = AtomicBool::new(true);
     static ref SELECTED_INTERFACE: Mutex<Option<String>> = Mutex::new(None);
     static ref PORT_MAP: Mutex<HashMap<u16, (u32, String)>> = Mutex::new(HashMap::new());
+    static ref GEO_CACHE: Mutex<HashMap<String, GeoInfo>> = Mutex::new(HashMap::new());
+    static ref GEO_IN_FLIGHT: Mutex<HashSet<String>> = Mutex::new(HashSet::new());
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -124,6 +127,15 @@ fn calculate_risk_score(
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GeoInfo {
+    pub city: String,
+    pub region: String,
+    pub country_code: String,
+    pub asn: String,
+    pub org: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NetworkEvent {
     pub process: String,
     pub pid: u32,
@@ -134,10 +146,117 @@ pub struct NetworkEvent {
     pub direction: String,
     pub threat_score: u32,
     pub threat_label: String,
+    pub geo_info: Option<GeoInfo>,
+}
+
+fn parse_asn_org(raw: &str) -> (String, String) {
+    if let Some(first_space) = raw.find(' ') {
+        let first = &raw[..first_space];
+        if first.starts_with("AS") && first[2..].chars().all(|c| c.is_ascii_digit()) {
+            return (first.to_string(), raw[first_space + 1..].to_string());
+        }
+    }
+    ("".to_string(), raw.to_string())
+}
+
+/// Resolve a single IP (IPv4 or IPv6) to GeoInfo.
+/// Tries ipinfo.io first, falls back to ip-api.com.
+async fn resolve_geo_ip(client: &reqwest::Client, ip: &str) -> Option<GeoInfo> {
+    // Primary: ipinfo.io — handles both IPv4 and IPv6
+    let url = format!("https://ipinfo.io/{}/json", ip);
+    if let Ok(resp) = client.get(&url).send().await {
+        if resp.status().is_success() {
+            if let Ok(json) = resp.json::<serde_json::Value>().await {
+                let country_code = json["country"].as_str().unwrap_or("").to_string();
+                let org_full     = json["org"].as_str().unwrap_or("").to_string();
+                if !country_code.is_empty() || !org_full.is_empty() {
+                    let city   = json["city"].as_str().unwrap_or("").to_string();
+                    let region = json["region"].as_str().unwrap_or("").to_string();
+                    let (asn, org) = parse_asn_org(&org_full);
+                    return Some(GeoInfo { city, region, country_code, asn, org });
+                }
+            }
+        }
+    }
+
+    // Fallback: ip-api.com — also handles IPv6
+    let url = format!(
+        "http://ip-api.com/json/{}?fields=status,country,countryCode,regionName,city,as,org",
+        ip
+    );
+    if let Ok(resp) = client.get(&url).send().await {
+        if let Ok(json) = resp.json::<serde_json::Value>().await {
+            if json["status"].as_str() == Some("success") {
+                let city         = json["city"].as_str().unwrap_or("").to_string();
+                let region       = json["regionName"].as_str().unwrap_or("").to_string();
+                let country_code = json["countryCode"].as_str().unwrap_or("").to_string();
+                let as_str       = json["as"].as_str().unwrap_or("").to_string();
+                let org_str      = json["org"].as_str().unwrap_or("").to_string();
+                let src          = if as_str.is_empty() { &org_str } else { &as_str };
+                let (asn, org)   = parse_asn_org(src);
+                let org          = if org.is_empty() { org_str } else { org };
+                return Some(GeoInfo { city, region, country_code, asn, org });
+            }
+        }
+    }
+
+    None
 }
 
 pub fn start_active_probe(app: AppHandle) {
-    // Port-to-Process resolution thread (Production Grade Background Resolver)
+    // GeoIP Resolution Thread — concurrent lookups, IPv4 + IPv6, dual provider
+    std::thread::spawn(move || {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let client = reqwest::Client::builder()
+                .timeout(Duration::from_secs(5))
+                .user_agent("Vigilance/1.0")
+                .build()
+                .unwrap_or_else(|_| reqwest::Client::new());
+
+            loop {
+                // Collect pending IPs that aren't already resolved
+                let pending: Vec<String> = {
+                    let flight = GEO_IN_FLIGHT.lock().unwrap();
+                    let cache  = GEO_CACHE.lock().unwrap();
+                    flight.iter()
+                        .filter(|ip| !cache.contains_key(*ip))
+                        .cloned()
+                        .take(8) // max 8 concurrent per tick — friendly to free-tier rate limits
+                        .collect()
+                };
+
+                if !pending.is_empty() {
+                    // Spawn all lookups concurrently
+                    let handles: Vec<_> = pending.into_iter().map(|ip| {
+                        let c = client.clone();
+                        tokio::spawn(async move {
+                            let geo = resolve_geo_ip(&c, &ip).await;
+                            (ip, geo)
+                        })
+                    }).collect();
+
+                    for handle in handles {
+                        if let Ok((ip, geo)) = handle.await {
+                            if let Some(info) = geo {
+                                let mut cache = GEO_CACHE.lock().unwrap();
+                                if cache.len() >= 2000 {
+                                    let keys: Vec<_> = cache.keys().take(500).cloned().collect();
+                                    for k in keys { cache.remove(&k); }
+                                }
+                                cache.insert(ip.clone(), info);
+                            }
+                            GEO_IN_FLIGHT.lock().unwrap().remove(&ip);
+                        }
+                    }
+                }
+
+                tokio::time::sleep(Duration::from_millis(500)).await;
+            }
+        });
+    });
+
+    // Port-to-Process resolution thread
     std::thread::spawn(move || {
         // sys is only needed on Windows for PID→process name resolution via sysinfo
         #[cfg(target_os = "windows")]
@@ -229,25 +348,45 @@ pub fn start_active_probe(app: AppHandle) {
             };
 
             fn adapter_priority(iface: &datalink::NetworkInterface) -> i32 {
-                let combined = format!("{} {}", iface.name, iface.description).to_lowercase();
+                let name = iface.name.to_lowercase();
+                let combined = format!("{} {}", name, iface.description.to_lowercase());
+
+                // Skip virtual / tunnel / special adapters
+                // Windows keywords
                 if combined.contains("virtual") || combined.contains("vmware")
                     || combined.contains("hyper-v") || combined.contains("vethernet")
                     || combined.contains("virtualbox") || combined.contains("tunnel")
                     || combined.contains("bluetooth") || combined.contains("pseudo")
                     || combined.contains("miniport") || combined.contains("wan ")
                     || combined.contains("isatap") || combined.contains("teredo")
-                    || combined.contains("6to4") || combined.contains("loopback")
-                    || combined.contains("npcap loopback") {
+                    || combined.contains("6to4") || combined.contains("npcap loopback")
+                    // macOS tunnel / virtual interface name prefixes
+                    || name.starts_with("utun")   // VPN, iCloud Private Relay
+                    || name.starts_with("awdl")   // Apple Wireless Direct Link
+                    || name.starts_with("llw")    // Low Latency WLAN
+                    || name.starts_with("p2p")    // Wi-Fi P2P
+                    || name.starts_with("bridge") // macOS bridge
+                    || name.starts_with("gif")    // IPv6-in-IPv4 tunnel
+                    || name.starts_with("stf")    // 6to4 tunnel
+                    || name.starts_with("anpi")   // Apple Network Proxy Interface
+                    || name == "lo0"              // loopback (redundant but explicit)
+                {
                     return 0;
                 }
+
+                // Wi-Fi: Windows description keywords OR macOS en0 (primary Wi-Fi/Ethernet)
                 if combined.contains("wi-fi") || combined.contains("wifi")
                     || combined.contains("wlan") || combined.contains("wireless")
-                    || combined.contains("802.11") {
+                    || combined.contains("802.11") || name == "en0" {
                     return 3;
                 }
-                if combined.contains("ethernet") || combined.contains(" lan") {
+
+                // Ethernet: Windows keywords OR macOS en1/en2/en3 secondary adapters
+                if combined.contains("ethernet") || combined.contains(" lan")
+                    || (name.starts_with("en") && name.len() <= 3) {
                     return 2;
                 }
+
                 1
             }
 
@@ -316,119 +455,174 @@ pub fn start_active_probe(app: AppHandle) {
                 match rx.next() {
                     Ok(packet) => {
                         if let Some(eth_packet) = EthernetPacket::new(packet) {
-                            if let Some(ipv4) = Ipv4Packet::new(eth_packet.payload()) {
-                                let src_addr = ipv4.get_source().to_string();
-                                let dst_addr = ipv4.get_destination().to_string();
+                            // Dispatch by EtherType.
+                        // IPv6 is mandatory: Apple TV, Netflix, YouTube all prefer IPv6 (QUIC/HTTP3).
+                        // Without this, ALL streaming traffic from modern CDNs is invisible.
+                        let ethertype = eth_packet.get_ethertype();
 
-                                // Inbound = packet destined for one of our own IPs
-                                let is_inbound = local_ips.iter().any(|ip| ip == &dst_addr);
-                                let (remote_addr, direction) = if is_inbound {
-                                    (src_addr, "Inbound")
-                                } else {
-                                    (dst_addr, "Outbound")
-                                };
-
-                                let mut remote_port: u16 = 0;
-                                let mut local_port: u16 = 0;
-
-                                let protocol: String = match ipv4.get_next_level_protocol() {
-                                    IpNextHeaderProtocols::Tcp => {
-                                        if let Some(tcp) = TcpPacket::new(ipv4.payload()) {
-                                            if is_inbound {
-                                                remote_port = tcp.get_source();
-                                                local_port = tcp.get_destination();
-                                            } else {
-                                                remote_port = tcp.get_destination();
-                                                local_port = tcp.get_source();
+                        // Returns (src, dst, protocol, remote_port, local_port)
+                        let layer3: Option<(String, String, String, u16, u16)> =
+                            if ethertype == EtherTypes::Ipv4 {
+                                Ipv4Packet::new(eth_packet.payload()).map(|ipv4| {
+                                    let src = ipv4.get_source().to_string();
+                                    let dst = ipv4.get_destination().to_string();
+                                    let is_in = local_ips.iter().any(|ip| ip == &dst);
+                                    let mut rport = 0u16;
+                                    let mut lport = 0u16;
+                                    let proto = match ipv4.get_next_level_protocol() {
+                                        IpNextHeaderProtocols::Tcp => {
+                                            if let Some(tcp) = TcpPacket::new(ipv4.payload()) {
+                                                if is_in { rport = tcp.get_source(); lport = tcp.get_destination(); }
+                                                else     { rport = tcp.get_destination(); lport = tcp.get_source(); }
                                             }
-                                        }
-                                        "TCP".to_string()
-                                    },
-                                    IpNextHeaderProtocols::Udp => {
-                                        if let Some(udp) = UdpPacket::new(ipv4.payload()) {
-                                            if is_inbound {
-                                                remote_port = udp.get_source();
-                                                local_port = udp.get_destination();
-                                            } else {
-                                                remote_port = udp.get_destination();
-                                                local_port = udp.get_source();
+                                            "TCP".to_string()
+                                        },
+                                        IpNextHeaderProtocols::Udp => {
+                                            if let Some(udp) = UdpPacket::new(ipv4.payload()) {
+                                                if is_in { rport = udp.get_source(); lport = udp.get_destination(); }
+                                                else     { rport = udp.get_destination(); lport = udp.get_source(); }
                                             }
-                                        }
-                                        "UDP".to_string()
-                                    },
-                                    // Kernel-handled protocols — no port numbers, no user process
-                                    IpNextHeaderProtocols::Icmp   => "ICMP".to_string(),
-                                    IpNextHeaderProtocols::Icmpv6 => "ICMPv6".to_string(),
-                                    p => match p.0 {
-                                        2   => "IGMP".to_string(),   // multicast group mgmt
-                                        4   => "IPIP".to_string(),   // IP-in-IP tunnel
-                                        47  => "GRE".to_string(),    // VPN encapsulation
-                                        50  => "ESP".to_string(),    // IPsec encrypted
-                                        51  => "AH".to_string(),     // IPsec auth header
-                                        89  => "OSPF".to_string(),   // routing protocol
-                                        103 => "PIM".to_string(),    // multicast routing
-                                        112 => "VRRP".to_string(),   // router redundancy
-                                        132 => "SCTP".to_string(),   // stream transport
-                                        n   => format!("PROTO-{}", n), // unknown — show number
-                                    },
-                                };
-
-                                // Simplified aggregation to prevent bridge flooding
-                                let flow_key = format!("{}:{}:{}:{}", remote_addr, remote_port, protocol, direction);
-
-                                let entry = aggregated_stats.entry(flow_key.clone()).or_insert_with(|| {
-                                    let last_seen = connection_history.get(&remote_addr).cloned();
-                                    let (threat_label, threat_score) = calculate_risk_score(
-                                        &remote_addr,
-                                        remote_port,
-                                        &protocol,
-                                        last_seen
-                                    );
-
-                                    // Non-TCP/UDP has no port → kernel owns it, not a user process.
-                                    // Both cases group under "Guardian Kernel" so system traffic
-                                    // stays in one place; protocol detail is visible in sub-rows.
-                                    let (pid, process) = if local_port == 0 {
-                                        (0u32, "Guardian Kernel".to_string())
-                                    } else {
-                                        let guard = PORT_MAP.lock().unwrap();
-                                        guard.get(&local_port).cloned()
-                                            .unwrap_or((0, "Guardian Kernel".to_string()))
+                                            "UDP".to_string()
+                                        },
+                                        IpNextHeaderProtocols::Icmp   => "ICMP".to_string(),
+                                        IpNextHeaderProtocols::Icmpv6 => "ICMPv6".to_string(),
+                                        p => match p.0 {
+                                            2   => "IGMP".to_string(),
+                                            4   => "IPIP".to_string(),
+                                            47  => "GRE".to_string(),
+                                            50  => "ESP".to_string(),
+                                            51  => "AH".to_string(),
+                                            89  => "OSPF".to_string(),
+                                            103 => "PIM".to_string(),
+                                            112 => "VRRP".to_string(),
+                                            132 => "SCTP".to_string(),
+                                            n   => format!("PROTO-{}", n),
+                                        },
                                     };
+                                    (src, dst, proto, rport, lport)
+                                })
+                            } else if ethertype == EtherTypes::Ipv6 {
+                                Ipv6Packet::new(eth_packet.payload()).map(|ipv6| {
+                                    let src = ipv6.get_source().to_string();
+                                    let dst = ipv6.get_destination().to_string();
+                                    let is_in = local_ips.iter().any(|ip| ip == &dst);
+                                    let mut rport = 0u16;
+                                    let mut lport = 0u16;
+                                    let proto = match ipv6.get_next_header() {
+                                        IpNextHeaderProtocols::Tcp => {
+                                            if let Some(tcp) = TcpPacket::new(ipv6.payload()) {
+                                                if is_in { rport = tcp.get_source(); lport = tcp.get_destination(); }
+                                                else     { rport = tcp.get_destination(); lport = tcp.get_source(); }
+                                            }
+                                            "TCP".to_string()
+                                        },
+                                        IpNextHeaderProtocols::Udp => {
+                                            if let Some(udp) = UdpPacket::new(ipv6.payload()) {
+                                                if is_in { rport = udp.get_source(); lport = udp.get_destination(); }
+                                                else     { rport = udp.get_destination(); lport = udp.get_source(); }
+                                            }
+                                            "UDP".to_string()
+                                        },
+                                        p => format!("PROTO-{}", p.0),
+                                    };
+                                    (src, dst, proto, rport, lport)
+                                })
+                            } else {
+                                None // ARP and other non-IP frames — ignore
+                            };
 
-                                    NetworkEvent {
-                                        process,
-                                        pid,
-                                        remote_addr: remote_addr.clone(),
-                                        remote_port,
-                                        bytes: 0,
-                                        protocol,
-                                        direction: direction.to_string(),
-                                        threat_score,
-                                        threat_label,
+                        if let Some((src_addr, dst_addr, protocol, remote_port, local_port)) = layer3 {
+                            // Only count traffic that involves this machine (promiscuous filter)
+                            let is_inbound  = local_ips.iter().any(|ip| ip == &dst_addr);
+                            let is_outbound = local_ips.iter().any(|ip| ip == &src_addr);
+                            if !is_inbound && !is_outbound {
+                                continue;
+                            }
+
+                            let (remote_addr, direction) = if is_inbound {
+                                (src_addr, "Inbound")
+                            } else {
+                                (dst_addr, "Outbound")
+                            };
+
+                            let flow_key = format!("{}:{}:{}:{}", remote_addr, remote_port, protocol, direction);
+
+                            // Check GeoIP cache; queue public IPs (IPv4 and IPv6) for resolution
+                            let geo_info = {
+                                let cache = GEO_CACHE.lock().unwrap();
+                                let resolved = cache.get(&remote_addr).cloned();
+                                if resolved.is_none() {
+                                    let is_public = remote_addr.parse::<std::net::Ipv4Addr>()
+                                        .map(|ip| !ip.is_private() && !ip.is_loopback() && !ip.is_link_local())
+                                        .unwrap_or_else(|_| {
+                                            remote_addr.parse::<std::net::Ipv6Addr>()
+                                                .map(|ip| !ip.is_loopback() && !ip.is_unspecified()
+                                                    && !remote_addr.starts_with("fe80"))
+                                                .unwrap_or(false)
+                                        });
+                                    if is_public {
+                                        GEO_IN_FLIGHT.lock().unwrap().insert(remote_addr.clone());
                                     }
-                                });
+                                }
+                                resolved
+                            };
 
-                                entry.bytes += packet.len();
-                                
-                                // Update history
-                                let now = Instant::now();
-                                let interval = if let Some((prev_time, _)) = connection_history.get(&remote_addr) {
-                                    now.duration_since(*prev_time)
+                            let entry = aggregated_stats.entry(flow_key.clone()).or_insert_with(|| {
+                                let last_seen = connection_history.get(&remote_addr).cloned();
+                                let (threat_label, threat_score) = calculate_risk_score(
+                                    &remote_addr,
+                                    remote_port,
+                                    &protocol,
+                                    last_seen
+                                );
+
+                                let (pid, process) = if local_port == 0 {
+                                    (0u32, "Guardian Kernel".to_string())
                                 } else {
-                                    Duration::from_secs(0)
+                                    let guard = PORT_MAP.lock().unwrap();
+                                    guard.get(&local_port).cloned()
+                                        .unwrap_or((0, "Guardian Kernel".to_string()))
                                 };
-                                connection_history.insert(remote_addr, (now, interval));
 
-                                // Periodic emit
-                                if last_emit.elapsed() >= Duration::from_millis(500) {
-                                    for event in aggregated_stats.values() {
-                                        let _ = app.emit("network-event", event);
-                                    }
-                                    aggregated_stats.clear();
-                                    last_emit = Instant::now();
+                                NetworkEvent {
+                                    process,
+                                    pid,
+                                    remote_addr: remote_addr.clone(),
+                                    remote_port,
+                                    bytes: 0,
+                                    protocol,
+                                    direction: direction.to_string(),
+                                    threat_score,
+                                    threat_label,
+                                    geo_info: geo_info.clone(),
+                                }
+                            });
+                            entry.geo_info = geo_info;
+                            entry.bytes += packet.len();
+
+                            // Update history — cap at 5000 entries
+                            let now = Instant::now();
+                            let interval = if let Some((prev_time, _)) = connection_history.get(&remote_addr) {
+                                now.duration_since(*prev_time)
+                            } else {
+                                Duration::from_secs(0)
+                            };
+                            if connection_history.len() >= 5000 {
+                                if let Some(oldest_key) = connection_history.keys().next().cloned() {
+                                    connection_history.remove(&oldest_key);
                                 }
                             }
+                            connection_history.insert(remote_addr, (now, interval));
+
+                            // Periodic emit
+                            if last_emit.elapsed() >= Duration::from_millis(500) {
+                                for event in aggregated_stats.values() {
+                                    let _ = app.emit("network-event", event);
+                                }
+                                aggregated_stats.clear();
+                                last_emit = Instant::now();
+                            }
+                        }
                         }
                     }
                     Err(_e) => {
