@@ -10,3 +10,6 @@ coverage/
 src-tauri/resources/config.json
 src-tauri/target/
 temp/
+Vigilance-Portable/
+build-portable.ps1
+get-hashes.ps1
