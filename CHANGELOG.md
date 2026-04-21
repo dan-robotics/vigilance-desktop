@@ -1,5 +1,14 @@
 ## 📜 Changelog
 
+### 🚀 v1.0.1
+- **Heuristics Fixes: Corrected beaconing thresholds (10s) and scoring mismatches. 
+
+- **Kernel Intelligence**: Transitioned from "Guardian Kernel" catch-all to specific protocol decoding (ICMP, IGMP, OSPF, etc.).
+
+- **Intelligence**: Integrated async GeoIP lookups and automatic Gemini AI explanations for threats.
+
+- **UI/UX**: Fixed table horizontal scrolling with a new static-width layout and stacking protocol badges.
+
 ### 🚀 v0.2.2 - Mock Data Removal & macOS Support
 
 - **Mock Data Removed**: Removed all hardcoded placeholder connections (fake chrome.exe, svchost.exe, discord.exe, spotify.exe, and the Russian IP 45.182.18.5) that were showing on every launch. App now starts with an empty list and fills with real traffic only.

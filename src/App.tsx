@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { 
-  Shield, 
-  Activity, 
-  Globe, 
-  Cpu, 
+  Shield,
+  Activity,
+  Globe,
+  Cpu,
   Zap, 
   ArrowUp, 
   ArrowDown, 
@@ -49,6 +49,51 @@ async function getAiClient(): Promise<GoogleGenAI> {
   return aiClient;
 }
 
+// --- Local fallback explanation (no API key required) ---
+// Used when cloud AI is disabled or unavailable. Builds a human-readable
+// assessment from GeoIP org/country, port semantics, and the heuristic reason.
+function localExplain(ip: string, port: number, protocol: string, location: string, reason: string): string {
+  const org = location.includes(' — ') ? location.split(' — ')[1]?.trim() : '';
+  const country = (() => {
+    const withoutOrg = location.split(' — ')[0].trim();
+    const parts = withoutOrg.split(', ');
+    return parts[parts.length - 1]?.trim() || '';
+  })();
+
+  const parts: string[] = [];
+
+  if (org)     parts.push(org);
+  if (country) parts.push(`located in ${country}`);
+
+  const portDesc: Record<number, string> = {
+    80: 'HTTP (unencrypted web)', 443: 'HTTPS', 53: 'DNS',
+    22: 'SSH — review if unexpected', 25: 'SMTP mail relay',
+    3389: 'RDP remote desktop — high risk if external', 445: 'SMB file sharing — block if external',
+    6667: 'IRC (exploit/C2 channel)', 4444: 'Metasploit default — likely exploit traffic',
+    31337: 'Elite/back-orifice port — likely malicious',
+  };
+  parts.push(portDesc[port] ?? `port ${port} (${protocol})`);
+
+  if (reason.includes('Beaconing'))
+    parts.push('consistent intervals suggest a keepalive or background sync — verify the process is expected');
+  if (reason.includes('Blacklisted'))
+    parts.push('IP matches threat intelligence blacklist — block and investigate immediately');
+  if (reason.includes('Protocol Mismatch'))
+    parts.push('protocol mismatch may indicate tunneling or a misconfigured service');
+
+  const highRiskCountries = ['Russia', 'RU', 'China', 'CN', 'North Korea', 'KP', 'Iran', 'IR', 'Belarus', 'BY'];
+  if (highRiskCountries.some(c => country.includes(c)))
+    parts.push('origin country has elevated threat profile — investigate if this connection is unexpected');
+
+  // Check for residential vs cloud hosting to distinguish C2 from CDN
+  const cloudKeywords = ['Amazon', 'Google', 'Microsoft', 'Azure', 'Cloudflare', 'Akamai', 'Fastly', 'DigitalOcean', 'Hetzner'];
+  const isCloud = cloudKeywords.some(k => org.includes(k));
+  if (isCloud && reason.includes('Beaconing'))
+    parts.push('cloud-hosted endpoint — beaconing to cloud providers is common and usually benign');
+
+  return parts.join(' · ') || `No local context available for ${ip} — manual review recommended.`;
+}
+
 // --- Types ---
 
 interface Connection {
@@ -60,8 +105,9 @@ interface Connection {
   download: number; // KB/s
   upload: number;   // KB/s
   status: 'safe' | 'suspicious' | 'blocked';
-  protocol: 'TCP' | 'UDP';
+  protocol: string;
   location: string;
+  threatLabel: string;
 }
 
 interface NetworkEvent {
@@ -116,7 +162,7 @@ export default function App() {
   const [firewallRules, setFirewallRules] = useState<string[]>([]);
   const [availableInterfaces, setAvailableInterfaces] = useState<InterfaceInfo[]>([]);
   const [selectedInterface, setSelectedInterface] = useState<string>('');
-  const [detections, setDetections] = useState<{id: string, ip: string, reason: string, score: number, time: string}[]>([]);
+  const [detections, setDetections] = useState<{id: string, ip: string, port: number, reason: string, score: number, time: string, location: string, aiNote: string | null}[]>([]);
   const [sortKey, setSortKey] = useState<keyof Connection | null>(null);
   const [groupSortKey, setGroupSortKey] = useState<'process' | 'pid' | 'endpoints' | 'dataRate' | null>(null);
   const [groupSortDir, setGroupSortDir] = useState<'asc' | 'desc'>('asc');
@@ -126,6 +172,9 @@ export default function App() {
   const [upRateMBps, setUpRateMBps] = useState(0);
   const sessionTotalDownRef = useRef(0);
   const sessionTotalUpRef = useRef(0);
+  const geoCacheRef = useRef<Record<string, string>>({});
+  const detectionCooldownRef = useRef<Set<string>>(new Set());
+  const useCloudAiRef = useRef(useCloudAi);
   const [isFilterOpen, setIsFilterOpen] = useState(false);
   const [filterType, setFilterType] = useState<'all' | 'suspicious' | 'blocked' | 'safe'>('all');
   const [monitoringMode, setMonitoringMode] = useState<'audit' | 'active'>('active');
@@ -137,6 +186,8 @@ export default function App() {
   useEffect(() => {
     isPausedRef.current = isPaused;
   }, [isPaused]);
+
+  useEffect(() => { useCloudAiRef.current = useCloudAi; }, [useCloudAi]);
 
   // 1-second ticker: compute MB/s rate from delta and advance the chart
   useEffect(() => {
@@ -256,8 +307,8 @@ export default function App() {
   const exportDetectionsCsv = async (prefix: string) => {
     if (detections.length === 0) return;
     const filename = `${prefix}_${csvTimestamp()}.csv`;
-    const headers = ['Time', 'IP Address', 'Threat Reason', 'Risk Score'];
-    const rows = detections.map((d: {id: string, ip: string, reason: string, score: number, time: string}) => [d.time, d.ip, `"${d.reason}"`, d.score]);
+    const headers = ['Time', 'IP Address', 'Port', 'Location', 'Threat Reason', 'Risk Score', 'AI Note'];
+    const rows = detections.map(d => [d.time, d.ip, d.port || '', `"${d.location || ''}"`, `"${d.reason}"`, d.score, d.aiNote ? `"${d.aiNote}"` : '']);
     const csvContent = [headers, ...rows].map(e => e.join(",")).join("\n");
 
     if (isDesktop) {
@@ -319,6 +370,13 @@ export default function App() {
   useEffect(() => {
     async function init() {
       if ((window as any).__TAURI_INTERNALS__) {
+        // Auto-disable cloud AI if the key is missing or unreadable
+        try {
+          await invoke<string>('get_api_key');
+        } catch {
+          setUseCloudAi(false);
+        }
+
         try {
           const rules = await invoke<string[]>('get_firewall_rules');
           setFirewallRules(rules);
@@ -474,9 +532,10 @@ export default function App() {
                 remotePort: data.remote_port,
                 download: data.direction === 'Inbound' ? (data.bytes / 1024) * 2 : 0,
                 upload: data.direction === 'Outbound' ? (data.bytes / 1024) * 2 : 0,
-                status: data.threat_score > 50 ? 'suspicious' : 'safe',
-                protocol: data.protocol as 'TCP' | 'UDP',
-                location: data.threat_label || 'Verified Stream'
+                status: data.threat_score >= 45 ? 'suspicious' : 'safe',
+                protocol: data.protocol,
+                location: existingIdx >= 0 ? prev[existingIdx].location : '',
+                threatLabel: data.threat_label || 'Verified Stream'
               };
 
               if (existingIdx >= 0) {
@@ -492,15 +551,75 @@ export default function App() {
             });
 
 
-            // Update Guardian Detections if suspicious
-            if (data.threat_score > 40) {
-              setDetections(prev => [{
-                id: Math.random().toString(36).substr(2, 9),
-                ip: data.remote_addr,
-                reason: data.threat_label,
-                score: data.threat_score,
-                time: new Date().toLocaleTimeString()
-              }, ...prev].slice(0, 50));
+            // GeoIP lookup — fire once per unique IP, cache results
+            const geoIp = data.remote_addr;
+            if (!geoCacheRef.current[geoIp]) {
+              geoCacheRef.current[geoIp] = 'resolving';
+              fetch(`https://ipinfo.io/${geoIp}/json`)
+                .then(r => r.json())
+                .then((geo: { city?: string; region?: string; country?: string; org?: string }) => {
+                  const parts = [geo.city, geo.region, geo.country].filter(Boolean).join(', ');
+                  const label = parts ? `${parts}${geo.org ? ` — ${geo.org}` : ''}` : 'Unknown Location';
+                  geoCacheRef.current[geoIp] = label;
+                  setConnections(prev => prev.map(c => c.remoteAddr === geoIp ? { ...c, location: label } : c));
+                  setDetections(prev => prev.map(d => d.ip === geoIp ? { ...d, location: label } : d));
+                })
+                .catch(() => { geoCacheRef.current[geoIp] = ''; });
+            }
+
+            // Update Guardian Detections — deduplicated per IP+reason (60s cooldown), with GeoIP + auto-AI
+            if (data.threat_score >= 45) {
+              const dedupKey = `${data.remote_addr}:${data.threat_label}`;
+              if (!detectionCooldownRef.current.has(dedupKey)) {
+                detectionCooldownRef.current.add(dedupKey);
+                setTimeout(() => detectionCooldownRef.current.delete(dedupKey), 60000);
+
+                const detId = Math.random().toString(36).substr(2, 9);
+                const detIp = data.remote_addr;
+                const cached = geoCacheRef.current[detIp];
+                const detLocation = (cached && cached !== 'resolving') ? cached : '';
+
+                setDetections(prev => [{
+                  id: detId,
+                  ip: detIp,
+                  port: data.remote_port,
+                  reason: data.threat_label,
+                  score: data.threat_score,
+                  time: new Date().toLocaleTimeString(),
+                  location: detLocation,
+                  aiNote: null,
+                }, ...prev].slice(0, 50));
+
+                const applyNote = (note: string) =>
+                  setDetections(prev => prev.map(d => d.id === detId ? { ...d, aiNote: note } : d));
+
+                if (useCloudAiRef.current) {
+                  getAiClient()
+                    .then(ai => ai.models.generateContent({
+                      model: 'gemini-2.0-flash',
+                      contents: `Network security alert: IP ${detIp}:${data.remote_port} (${data.protocol}), process "${data.process || 'unknown'}". Detection reason: ${data.threat_label}. In 1-2 sentences, identify what this IP likely belongs to (cloud provider, CDN, ISP, hosting provider, or known service) and whether this traffic is likely benign or worth investigating.`,
+                      config: {
+                        responseMimeType: "application/json",
+                        responseSchema: {
+                          type: Type.OBJECT,
+                          properties: { explanation: { type: Type.STRING } },
+                          required: ["explanation"]
+                        }
+                      }
+                    }))
+                    .then(response => {
+                      const result = JSON.parse(response.text || '{}');
+                      if (result.explanation) applyNote(result.explanation);
+                    })
+                    .catch(() => {
+                      // Gemini failed (quota, network, bad key) — fall back to local engine
+                      applyNote(localExplain(detIp, data.remote_port, data.protocol, detLocation, data.threat_label));
+                    });
+                } else {
+                  // Cloud AI disabled or key missing — use local engine immediately
+                  applyNote(localExplain(detIp, data.remote_port, data.protocol, detLocation, data.threat_label));
+                }
+              }
             }
           });
         }
@@ -849,22 +968,30 @@ export default function App() {
                 </div>
               </div>
 
-              <div className="overflow-x-auto">
-                <table className="w-full text-left border-collapse">
+              <div>
+                <table className="w-full text-left border-collapse table-fixed">
+                  <colgroup>
+                    <col className="w-10" />
+                    <col className="w-[26%]" />
+                    <col className="w-[26%]" />
+                    <col className="w-[18%]" />
+                    <col className="w-[20%]" />
+                    <col className="w-20" />
+                  </colgroup>
                   <thead>
                     <tr className="border-b border-white/5 text-[10px] uppercase tracking-widest font-bold text-slate-500">
-                      <th className="px-6 py-4">Status</th>
-                      <th className="px-6 py-4 cursor-pointer select-none hover:text-slate-300 transition-colors" onClick={() => handleGroupSort('process')}>
+                      <th className="px-4 py-4">Status</th>
+                      <th className="px-4 py-4 cursor-pointer select-none hover:text-slate-300 transition-colors" onClick={() => handleGroupSort('process')}>
                         Process / PID <SortArrow col="process" />
                       </th>
-                      <th className="px-6 py-4 cursor-pointer select-none hover:text-slate-300 transition-colors" onClick={() => handleGroupSort('endpoints')}>
+                      <th className="px-4 py-4 cursor-pointer select-none hover:text-slate-300 transition-colors" onClick={() => handleGroupSort('endpoints')}>
                         Endpoint <SortArrow col="endpoints" />
                       </th>
-                      <th className="px-6 py-4">Protocol / Port</th>
-                      <th className="px-6 py-4 text-right cursor-pointer select-none hover:text-slate-300 transition-colors" onClick={() => handleGroupSort('dataRate')}>
+                      <th className="px-4 py-4">Protocol / Port</th>
+                      <th className="px-4 py-4 text-right cursor-pointer select-none hover:text-slate-300 transition-colors" onClick={() => handleGroupSort('dataRate')}>
                         Data Rate <SortArrow col="dataRate" />
                       </th>
-                      <th className="px-6 py-4 cursor-pointer select-none hover:text-slate-300 transition-colors text-center" onClick={() => handleGroupSort('pid')}>
+                      <th className="px-4 py-4 cursor-pointer select-none hover:text-slate-300 transition-colors text-center" onClick={() => handleGroupSort('pid')}>
                         PID <SortArrow col="pid" />
                       </th>
                     </tr>
@@ -963,7 +1090,7 @@ export default function App() {
                               }}
                               className="group hover:bg-white/[0.02] transition-colors cursor-pointer"
                             >
-                              <td className="px-6 py-4 whitespace-nowrap">
+                              <td className="px-4 py-4">
                                 <div className={cn(
                                   "w-2 h-2 rounded-full",
                                   group.status === 'safe' ? "bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]" :
@@ -971,46 +1098,59 @@ export default function App() {
                                   "bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.5)]"
                                 )} />
                               </td>
-                              <td className="px-6 py-4 whitespace-nowrap">
-                                <div className="flex flex-col">
+                              <td className="px-4 py-4 overflow-hidden">
+                                <div className="flex flex-col min-w-0">
                                   <span className={cn(
-                                    "text-sm font-bold flex items-center gap-2",
+                                    "text-sm font-bold flex items-center gap-2 min-w-0",
                                     group.status === 'safe' ? "text-white" : "text-amber-500"
                                   )}>
-                                    {group.process}
-                                    <span className="text-[10px] bg-white/5 px-1.5 py-0.5 rounded text-slate-500 font-normal">
-                                      {group.connections.length} {group.connections.length === 1 ? 'Connection' : 'Connections'}
+                                    <span className="truncate">{group.process}</span>
+                                    <span className="text-[10px] bg-white/5 px-1.5 py-0.5 rounded text-slate-500 font-normal shrink-0">
+                                      {group.connections.length} {group.connections.length === 1 ? 'Conn' : 'Conns'}
                                     </span>
                                   </span>
                                   <span className="text-[10px] font-mono text-slate-500">PID: {group.pid}</span>
                                 </div>
                               </td>
-                              <td className="px-6 py-4">
-                                <span className="text-xs text-slate-500 italic">
-                                  {group.connections.map(c => c.remoteAddr).slice(0, 2).join(', ')}
-                                  {group.connections.length > 2 ? ` +${group.connections.length - 2} more` : ''}
-                                </span>
+                              <td className="px-4 py-4 overflow-hidden">
+                                <div className="flex flex-col gap-0.5 min-w-0">
+                                  {group.connections.slice(0, 2).map(c => (
+                                    <div key={c.id} className="flex items-center gap-1.5 min-w-0">
+                                      <span className="text-xs text-slate-500 font-mono truncate">{c.remoteAddr}</span>
+                                      {shortGeo(c.location) && (
+                                        <span className="text-[9px] text-slate-600 flex items-center gap-0.5 shrink-0">
+                                          <Globe className="w-2.5 h-2.5" />{shortGeo(c.location)}
+                                        </span>
+                                      )}
+                                    </div>
+                                  ))}
+                                  {group.connections.length > 2 && (
+                                    <span className="text-[10px] text-slate-600">+{group.connections.length - 2} more</span>
+                                  )}
+                                </div>
                               </td>
-                              <td className="px-6 py-4 whitespace-nowrap">
-                                <span className="text-[10px] font-bold text-slate-600 uppercase tracking-widest">
-                                  {[...new Set(group.connections.map(c => c.protocol))].join(' / ')}
-                                </span>
+                              <td className="px-4 py-4">
+                                <div className="flex flex-wrap gap-1">
+                                  {[...new Set(group.connections.map(c => c.protocol))].map(p => (
+                                    <span key={p} className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-white/5 border border-white/5 text-slate-500 uppercase tracking-wider whitespace-nowrap">{p}</span>
+                                  ))}
+                                </div>
                               </td>
-                              <td className="px-6 py-4 whitespace-nowrap text-right">
+                              <td className="px-4 py-4 text-right">
                                 <div className="flex flex-col items-end gap-0.5">
                                   <div className="flex items-center gap-1.5">
                                     <ArrowDown className="w-3 h-3 text-emerald-500" />
                                     <span className="text-sm font-mono text-emerald-500">{group.totalDownload.toFixed(1)} <span className="text-[10px] opacity-60">KB/s</span></span>
                                   </div>
-                                  <span className="text-[10px] font-mono text-slate-500">{formatDataSize(group.totalDownBytes)} total ↓</span>
+                                  <span className="text-[10px] font-mono text-slate-500">{formatDataSize(group.totalDownBytes)} ↓</span>
                                   <div className="flex items-center gap-1.5 mt-0.5">
                                     <ArrowUp className="w-3 h-3 text-blue-500" />
                                     <span className="text-sm font-mono text-blue-500">{group.totalUpload.toFixed(1)} <span className="text-[10px] opacity-60">KB/s</span></span>
                                   </div>
-                                  <span className="text-[10px] font-mono text-slate-500">{formatDataSize(group.totalUpBytes)} total ↑</span>
+                                  <span className="text-[10px] font-mono text-slate-500">{formatDataSize(group.totalUpBytes)} ↑</span>
                                 </div>
                               </td>
-                              <td className="px-6 py-4 whitespace-nowrap text-right">
+                              <td className="px-4 py-4 text-right">
                                 <MoreVertical className={cn("w-4 h-4 text-slate-600 transition-transform", expandedProcesses.has(group.process) ? "rotate-90 text-white" : "")} />
                               </td>
                             </motion.tr>
@@ -1021,7 +1161,7 @@ export default function App() {
                                 animate={{ opacity: 1, height: 'auto' }}
                                 className="bg-white/[0.01] border-l-2 border-emerald-500/20 group/sub"
                               >
-                                <td className="px-6 py-2">
+                                <td className="px-4 py-2">
                                   <div className={cn(
                                     "w-1.5 h-1.5 rounded-full ml-0.5",
                                     conn.status === 'safe' ? "bg-emerald-500/60" :
@@ -1029,47 +1169,56 @@ export default function App() {
                                     "bg-red-500/60"
                                   )} />
                                 </td>
-                                <td className="px-6 py-2">
-                                  <div className="flex flex-col">
+                                <td className="px-4 py-2 overflow-hidden">
+                                  <div className="flex flex-col min-w-0">
                                     <span className="text-[10px] font-mono text-slate-400">Socket {conn.id}</span>
                                     {aiAnalysis[conn.id] && (
-                                      <span className="text-[10px] text-emerald-500/80 italic border-l border-emerald-500/50 pl-2 mt-0.5">
+                                      <span className="text-[10px] text-emerald-500/80 italic border-l border-emerald-500/50 pl-2 mt-0.5 line-clamp-2" title={aiAnalysis[conn.id]}>
                                         AI: {aiAnalysis[conn.id]}
                                       </span>
                                     )}
                                   </div>
                                 </td>
-                                <td className="px-6 py-2">
-                                  <div className="flex flex-col">
-                                    <span className="text-xs text-slate-300 font-mono">{conn.remoteAddr}</span>
+                                <td className="px-4 py-2 overflow-hidden">
+                                  <div className="flex flex-col min-w-0">
+                                    <span className="text-xs text-slate-300 font-mono truncate">{conn.remoteAddr}</span>
+                                    {conn.location && conn.location !== 'resolving' && (
+                                      <span className="text-[9px] text-slate-500 flex items-center gap-1 truncate" title={conn.location}>
+                                        <Globe className="w-2.5 h-2.5 shrink-0" /> {shortGeo(conn.location)}
+                                      </span>
+                                    )}
                                     <span className={cn(
-                                      "text-[9px] font-bold uppercase tracking-wider flex items-center gap-1",
-                                      conn.location.includes('HIGH RISK') ? "text-red-500 animate-pulse" :
-                                      conn.location.includes('Suspicious') ? "text-amber-500" : "text-slate-500"
-                                    )}>
-                                      <Globe className="w-2.5 h-2.5" /> {conn.location}
+                                      "text-[9px] font-bold uppercase tracking-wider flex items-center gap-1 truncate",
+                                      conn.threatLabel.includes('HIGH RISK') ? "text-red-500 animate-pulse" :
+                                      conn.threatLabel.includes('Suspicious') ? "text-amber-500" : "text-slate-500"
+                                    )} title={conn.threatLabel}>
+                                      <Shield className="w-2.5 h-2.5 shrink-0" /> {conn.threatLabel}
                                     </span>
                                   </div>
                                 </td>
-                                <td className="px-6 py-2">
-                                  <div className="flex items-center gap-2">
-                                    <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-white/5 border border-white/5 text-slate-400">
-                                      {conn.protocol}
-                                    </span>
-                                    <span className="text-xs text-slate-400 font-mono">:{conn.remotePort}</span>
+                                <td className="px-4 py-2 overflow-hidden">
+                                  <div className="flex flex-col gap-0.5 min-w-0">
+                                    <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-white/5 border border-white/5 text-slate-400 self-start">{conn.protocol}</span>
+                                    {PROTOCOL_DESC[conn.protocol] ? (
+                                      <span className="text-[9px] text-slate-600 italic truncate">{PROTOCOL_DESC[conn.protocol]}</span>
+                                    ) : conn.protocol.startsWith('PROTO-') ? (
+                                      <span className="text-[9px] text-slate-600 italic">proto {conn.protocol.slice(6)}</span>
+                                    ) : conn.remotePort > 0 ? (
+                                      <span className="text-xs text-slate-400 font-mono">:{conn.remotePort}</span>
+                                    ) : null}
                                   </div>
                                 </td>
-                                <td className="px-6 py-2 text-right">
+                                <td className="px-4 py-2 text-right">
                                   <div className="flex flex-col items-end">
                                     <span className="text-xs font-mono text-emerald-500/70 flex items-center gap-1">
-                                      <ArrowDown className="w-2.5 h-2.5" /> {conn.download} <span className="text-[9px] opacity-60">KB/s</span>
+                                      <ArrowDown className="w-2.5 h-2.5" /> {conn.download.toFixed(2)} <span className="text-[9px] opacity-60">KB/s</span>
                                     </span>
                                     <span className="text-xs font-mono text-blue-500/70 flex items-center gap-1">
-                                      <ArrowUp className="w-2.5 h-2.5" /> {conn.upload} <span className="text-[9px] opacity-60">KB/s</span>
+                                      <ArrowUp className="w-2.5 h-2.5" /> {conn.upload.toFixed(2)} <span className="text-[9px] opacity-60">KB/s</span>
                                     </span>
                                   </div>
                                 </td>
-                                <td className="px-6 py-2 text-right">
+                                <td className="px-4 py-2 text-right">
                                   <button
                                     onClick={(e) => { e.stopPropagation(); analyzeThreat(conn); }}
                                     className="p-1.5 hover:bg-white/10 rounded-md transition-colors opacity-0 group-hover/sub:opacity-100 text-amber-500"
@@ -1134,22 +1283,37 @@ export default function App() {
 
                    <div className="space-y-4">
                      {detections.map((det) => (
-                       <div key={det.id} className="p-5 bg-white/[0.02] border border-white/5 rounded-2xl flex items-center justify-between group hover:border-amber-500/20 transition-all">
-                          <div className="flex items-center gap-5">
-                            <div className="w-10 h-10 rounded-xl bg-amber-500/10 flex items-center justify-center text-amber-500">
+                       <div key={det.id} className="p-5 bg-white/[0.02] border border-white/5 rounded-2xl flex items-start justify-between group hover:border-amber-500/20 transition-all">
+                          <div className="flex items-start gap-5 flex-1 min-w-0">
+                            <div className="w-10 h-10 rounded-xl bg-amber-500/10 flex items-center justify-center text-amber-500 shrink-0 mt-0.5">
                               <Shield className="w-5 h-5" />
                             </div>
-                            <div>
-                              <div className="flex items-center gap-2">
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2 flex-wrap">
                                 <span className="text-sm font-bold text-white uppercase tracking-tight">{det.reason}</span>
                                 <span className="text-[10px] px-2 py-0.5 rounded-full bg-red-500/20 text-red-500 font-mono">
                                   Score: {det.score}
                                 </span>
                               </div>
-                              <p className="text-xs text-slate-500 mt-1">Identified suspicious activity from <span className="font-mono text-slate-300">{det.ip}</span></p>
+                              <div className="flex items-center gap-3 mt-1 flex-wrap">
+                                <span className="text-xs text-slate-500">
+                                  From <span className="font-mono text-slate-300">{det.ip}</span>
+                                  {det.port > 0 && <span className="font-mono text-slate-600">:{det.port}</span>}
+                                </span>
+                                {det.location && (
+                                  <span className="text-[10px] text-slate-400 flex items-center gap-1">
+                                    <Globe className="w-3 h-3 shrink-0" /> {det.location}
+                                  </span>
+                                )}
+                              </div>
+                              {det.aiNote ? (
+                                <p className="text-[11px] text-emerald-400/80 italic mt-2 border-l-2 border-emerald-500/30 pl-2">{det.aiNote}</p>
+                              ) : useCloudAi && (
+                                <p className="text-[10px] text-slate-600 italic mt-1 animate-pulse">AI analyzing connection...</p>
+                              )}
                             </div>
                           </div>
-                          <div className="text-right">
+                          <div className="text-right shrink-0 ml-4">
                              <p className="text-xs font-mono text-slate-400">{det.time}</p>
                              <p className="text-[10px] text-slate-600 uppercase tracking-widest mt-1">Kernel Blocked</p>
                           </div>
@@ -1392,19 +1556,30 @@ export default function App() {
 
                    <div className="space-y-3">
                      {detections.map((det) => (
-                       <div key={det.id} className="p-5 bg-white/[0.02] border border-white/5 rounded-2xl flex items-center justify-between group hover:border-white/20 transition-all">
-                         <div className="flex flex-col gap-1">
-                           <div className="flex items-center gap-3">
+                       <div key={det.id} className="p-5 bg-white/[0.02] border border-white/5 rounded-2xl flex items-start justify-between group hover:border-white/20 transition-all">
+                         <div className="flex flex-col gap-1 flex-1 min-w-0 mr-4">
+                           <div className="flex items-center gap-3 flex-wrap">
                              <span className="text-sm font-mono text-white">{det.ip}</span>
+                             {det.port > 0 && <span className="text-slate-600 font-mono text-xs">:{det.port}</span>}
                              <span className="px-2 py-0.5 rounded-md bg-red-500/20 text-red-500 text-[10px] font-bold uppercase tracking-wider">
                                Score: {det.score}
                              </span>
                            </div>
-                           <p className="text-xs text-slate-500 leading-relaxed max-w-lg">{det.reason}</p>
+                           {det.location && (
+                             <span className="text-[10px] text-slate-400 flex items-center gap-1">
+                               <Globe className="w-3 h-3 shrink-0" /> {det.location}
+                             </span>
+                           )}
+                           <p className="text-xs text-slate-500 leading-relaxed">{det.reason}</p>
+                           {det.aiNote ? (
+                             <p className="text-[11px] text-emerald-400/80 italic mt-1 border-l-2 border-emerald-500/30 pl-2">{det.aiNote}</p>
+                           ) : useCloudAi && (
+                             <p className="text-[10px] text-slate-600 italic animate-pulse">AI analyzing connection...</p>
+                           )}
                          </div>
-                         <div className="text-right">
+                         <div className="text-right shrink-0">
                            <p className="text-[10px] font-mono text-slate-600 mb-2">{det.time}</p>
-                           <button 
+                           <button
                              onClick={() => blockConnection(det.ip)}
                              className="px-3 py-1.5 bg-red-500/10 hover:bg-red-500/20 text-red-500 rounded-lg text-[10px] font-bold uppercase tracking-widest transition-all"
                            >
@@ -1449,6 +1624,28 @@ export default function App() {
       </div>
     </div>
   );
+}
+
+const PROTOCOL_DESC: Record<string, string> = {
+  ICMP:   'ping / traceroute',
+  ICMPv6: 'ping / traceroute (IPv6)',
+  IGMP:   'multicast group',
+  IPIP:   'IP-in-IP tunnel',
+  GRE:    'VPN tunnel (GRE)',
+  ESP:    'IPsec encrypted tunnel',
+  AH:     'IPsec auth header',
+  OSPF:   'routing protocol',
+  PIM:    'multicast routing',
+  VRRP:   'router redundancy',
+  SCTP:   'stream control transport',
+};
+
+// Returns just the country from a full location string like "Seoul, Gyeonggi-do, KR — AS4766 Korea Telecom"
+function shortGeo(location: string): string {
+  if (!location || location === 'resolving') return '';
+  const withoutOrg = location.split(' — ')[0].trim();
+  const parts = withoutOrg.split(', ');
+  return parts[parts.length - 1]?.trim() || '';
 }
 
 // --- Subcomponents ---

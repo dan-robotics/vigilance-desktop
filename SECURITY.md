@@ -1,5 +1,8 @@
 # Security Policy
 
+## Updates: 
+Updated to reflect that while the app captures raw packets (requiring BPF/sudo), it now explicitly filters multicast and broadcast traffic to reduce noise and prevent false positives.
+
 ## Supported Versions
 The latest released version of Vigilance Desktop is supported.
 Older versions may not receive security updates.

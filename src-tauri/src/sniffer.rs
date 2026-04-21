@@ -58,6 +58,13 @@ fn calculate_risk_score(
         return ("Direct Broadcast (Normal)".to_string(), 0);
     }
 
+    // Multicast range (224.0.0.0/4) — includes mDNS (224.0.0.251), SSDP (239.255.255.250), etc.
+    if let Some(first) = ip.split('.').next().and_then(|s| s.parse::<u8>().ok()) {
+        if first >= 224 {
+            return ("Multicast (Normal)".to_string(), 0);
+        }
+    }
+
     let mut score = 0;
     let mut reasons = Vec::new();
 
@@ -85,7 +92,7 @@ fn calculate_risk_score(
         let current_interval = prev_time.elapsed();
         
         // Check if current interval is within 10% jitter of previous interval
-        if prev_interval.as_millis() > 500 {
+        if prev_interval.as_millis() > 10000 {
             let diff = if current_interval > prev_interval {
                 current_interval - prev_interval
             } else {
@@ -132,12 +139,13 @@ pub struct NetworkEvent {
 pub fn start_active_probe(app: AppHandle) {
     // Port-to-Process resolution thread (Production Grade Background Resolver)
     std::thread::spawn(move || {
-        use sysinfo::System;
-        let mut sys = System::new_all();
-        
+        // sys is only needed on Windows for PID→process name resolution via sysinfo
+        #[cfg(target_os = "windows")]
+        let mut sys = sysinfo::System::new_all();
+
         loop {
             let mut new_map = HashMap::new();
-            
+
             // Port→PID resolution — platform specific
             #[cfg(target_os = "windows")]
             let pid_output = Command::new("netstat")
@@ -199,7 +207,7 @@ pub fn start_active_probe(app: AppHandle) {
                     }
                 }
             }
-            
+
             {
                 let mut guard = PORT_MAP.lock().unwrap();
                 *guard = new_map;
@@ -312,7 +320,7 @@ pub fn start_active_probe(app: AppHandle) {
                                 let mut remote_port: u16 = 0;
                                 let mut local_port: u16 = 0;
 
-                                let protocol = match ipv4.get_next_level_protocol() {
+                                let protocol: String = match ipv4.get_next_level_protocol() {
                                     IpNextHeaderProtocols::Tcp => {
                                         if let Some(tcp) = TcpPacket::new(ipv4.payload()) {
                                             if is_inbound {
@@ -323,7 +331,7 @@ pub fn start_active_probe(app: AppHandle) {
                                                 local_port = tcp.get_source();
                                             }
                                         }
-                                        "TCP"
+                                        "TCP".to_string()
                                     },
                                     IpNextHeaderProtocols::Udp => {
                                         if let Some(udp) = UdpPacket::new(ipv4.payload()) {
@@ -335,27 +343,46 @@ pub fn start_active_probe(app: AppHandle) {
                                                 local_port = udp.get_source();
                                             }
                                         }
-                                        "UDP"
+                                        "UDP".to_string()
                                     },
-                                    _ => "OTHER",
+                                    // Kernel-handled protocols — no port numbers, no user process
+                                    IpNextHeaderProtocols::Icmp   => "ICMP".to_string(),
+                                    IpNextHeaderProtocols::Icmpv6 => "ICMPv6".to_string(),
+                                    p => match p.0 {
+                                        2   => "IGMP".to_string(),   // multicast group mgmt
+                                        4   => "IPIP".to_string(),   // IP-in-IP tunnel
+                                        47  => "GRE".to_string(),    // VPN encapsulation
+                                        50  => "ESP".to_string(),    // IPsec encrypted
+                                        51  => "AH".to_string(),     // IPsec auth header
+                                        89  => "OSPF".to_string(),   // routing protocol
+                                        103 => "PIM".to_string(),    // multicast routing
+                                        112 => "VRRP".to_string(),   // router redundancy
+                                        132 => "SCTP".to_string(),   // stream transport
+                                        n   => format!("PROTO-{}", n), // unknown — show number
+                                    },
                                 };
 
                                 // Simplified aggregation to prevent bridge flooding
                                 let flow_key = format!("{}:{}:{}:{}", remote_addr, remote_port, protocol, direction);
-                                
+
                                 let entry = aggregated_stats.entry(flow_key.clone()).or_insert_with(|| {
                                     let last_seen = connection_history.get(&remote_addr).cloned();
                                     let (threat_label, threat_score) = calculate_risk_score(
-                                        &remote_addr, 
-                                        remote_port, 
-                                        protocol, 
+                                        &remote_addr,
+                                        remote_port,
+                                        &protocol,
                                         last_seen
                                     );
-                                    
-                                    // Resolve process info from local port
-                                    let (pid, process) = {
+
+                                    // Non-TCP/UDP has no port → kernel owns it, not a user process.
+                                    // Both cases group under "Guardian Kernel" so system traffic
+                                    // stays in one place; protocol detail is visible in sub-rows.
+                                    let (pid, process) = if local_port == 0 {
+                                        (0u32, "Guardian Kernel".to_string())
+                                    } else {
                                         let guard = PORT_MAP.lock().unwrap();
-                                        guard.get(&local_port).cloned().unwrap_or((0, "Guardian Kernel".to_string()))
+                                        guard.get(&local_port).cloned()
+                                            .unwrap_or((0, "Guardian Kernel".to_string()))
                                     };
 
                                     NetworkEvent {
@@ -364,7 +391,7 @@ pub fn start_active_probe(app: AppHandle) {
                                         remote_addr: remote_addr.clone(),
                                         remote_port,
                                         bytes: 0,
-                                        protocol: protocol.to_string(),
+                                        protocol,
                                         direction: direction.to_string(),
                                         threat_score,
                                         threat_label,
