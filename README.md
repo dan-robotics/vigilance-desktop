@@ -55,8 +55,9 @@ To verify your download, run shasum -a 256 [filename] (macOS) or Get-FileHash [f
 ## Windows Distributions
 | Method | Filename | SHA-256 Checksum |
 |--------|----------|------------------|
-| **Windows Installer** | `Vigilance_1.0.1_x64_en-US.msi` | `[PENDING]` |
-| **Portable (Zip)** | `Vigilance-Portable-v1.0.1.zip` | `[PENDING]` |
+| **Windows Installer** | `Vigilance_1.0.1_x64_en-US.msi` | `[7071A71EBE8BD54F180246F4917EB829C4B389491CC32975051009AB038B5A13]` |
+| **Windows Installer** | `Vigilance_1.0.1_x64-setup.exe` | `[D5D190865D6BE5BD054E8C618F2D2DD65EB4EEF07E782F9809D1119C3BCD8D4B]` |
+| **Portable (Zip)** | `Vigilance-Portable-v1.0.1.zip` | `[9F480132F58B5335CBC10953FDB912134D4A5FBFDEF0D7911120DEDB35A46871]` |
 
 **macOS Note**: 
 Packet capture requires BPF access. The portable binary **must** be run with `sudo ./vigilance-portable`.
