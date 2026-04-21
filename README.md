@@ -1,61 +1,55 @@
 # Vigilance-Desktop: Network Monitoring & Security Shield
 
-
 https://github.com/user-attachments/assets/4f626fc0-d0f5-461b-8e2a-33757ab97c05
 
+> **Current Release: v1.0.1 — The Intelligence Update** — [Changelog](./CHANGELOG.md)
 
-
-
-> **Current Release: v0.2.2** — [Changelog](./CHANGELOG.md)
-
-Vigilance-Desktop is a high-performance system-wide network monitor designed for Windows. It provides real-time visibility into network traffic, process-level analysis, and firewall management through a unified Desktop experience.
+Vigilance-Desktop has officially moved from prototype to a **production-grade security engine**. It provides real-time visibility into network traffic, automated AI threat analysis, and kernel-level protocol transparency through a unified Desktop experience.
 
 ## 🏗️ Architecture
 
-The project is now a full-stack **Tauri** desktop application:
-1. **Frontend (React + Vite)**: A "Professional Polish" dashboard that displays network intelligence, traffic flows, and security alerts. It connects to the backend via Tauri's high-speed IPC bridge.
-2. **Backend (Rust Guardian Core)**: A kernel-level system probe located in `src-tauri`. It leverages the `pnet` crate for low-latency packet capture and sends real-time telemetry to the dashboard.
+The project is a full-stack **Tauri** desktop application:
+1. **Frontend (React + Vite)**: A "Professional Polish" dashboard that displays network intelligence and security alerts. Features a new static-width optimized layout for high-density monitoring.
+2. **Backend (Rust Guardian Core)**: A kernel-level system probe in `src-tauri`. It leverages the `pnet` crate for packet capture and now includes specific decoding for non-TCP/UDP protocols.
+
+## 💎 v1.0.1 Key Highlights
+
+- **Kernel Transparency**: Transitioned from a generic "Guardian Kernel" label to specific decoding for **ICMP, IGMP, OSPF, and GRE** traffic.
+- **GeoIP Intelligence**: Integrated live location lookups to identify City, Country, and ISP/Organization (e.g., AWS, Rostelecom, Korea Telecom) for every connection.
+- **AI Guardian**: Automated Gemini 2.0 Flash integration to explain suspicious behaviors in plain English directly within detection cards.
+- **Universal Compatibility**: Optimized builds for both Intel and Apple Silicon (M1/M2/M3/M4) Macs.
 
 ## 🛡️ Setup & Troubleshooting
 
-For hardware setup (Npcap), compiler linker fixes (`Packet.lib`), and driver permissions, please refer to the dedicated troubleshooting guide:
-
+For hardware setup (Npcap), compiler linker fixes, and driver permissions:
 👉 **[DOCS/TROUBLESHOOTING.md](./DOCS/TROUBLESHOOTING.md)**
 
-## 📦 Installation Options
+## 📦 Binary Downloads & Verifications
 
-| Method | File | Platform | Notes |
-|--------|------|----------|-------|
-| Windows Installer | `Vigilance_x64_en-US.msi` | Windows | Recommended, installs to AppData |
-| NSIS Installer | `Vigilance_x64-setup.exe` | Windows | Alternate installer |
-| Portable | `Vigilance-Portable-vX.X.X.zip` | Windows | No install needed, run from any folder |
-| Universal DMG | `Vigilance_0.2.2_universal.dmg` | macOS Intel + Apple Silicon | Recommended for Mac |
-| Apple Silicon DMG | `Vigilance_0.2.2_aarch64.dmg` | macOS Apple Silicon | M1/M2/M3/M4 |
-| Intel DMG | `Vigilance_0.2.2_x64.dmg` | macOS Intel | Intel Macs only |
-| macOS Portable | `Vigilance_0.2.2_universal.app.zip` | macOS | Unzip and run, no installer |
+To verify your download, run `shasum -a 256 [filename]` (macOS) or `Get-FileHash [filename]` (Windows).
 
-**Windows portable mode**: unzip, place your `config\config.json` with your Gemini API key, run `vigilance.exe` as Administrator. Config and logs stay local to the folder — nothing written to AppData.
+### macOS Distributions
+| Platform / Architecture | Filename | SHA-256 Checksum |
+|-------------------------|----------|------------------|
+| **macOS Universal** | `Vigilance_1.0.1_universal.dmg` | `406feb056c41d709682debe2f71df5438b0a7e51839bf8ad7d2c3617c3f3e857` |
+| **Apple Silicon Native** | `Vigilance_1.0.1_aarch64.dmg` | `a00101919d67a5b3fb452c29398ac4b9ff2018edacaeeeaf61194eb889a7c56e` |
+| **Intel Native** | `Vigilance_1.0.1_x64.dmg` | `b54e3309f94fcd9058386b6d63cb134ff4bfd6e680782cca504158e455f29a92` |
+| **Universal Portable** | `vigilance-portable` | `3f2ade43b89f152d3c2b2453893346b4b6026564a30a655caa46dae735f2e86f` |
 
-**macOS first-time setup**: raw packet capture requires BPF access. Run once in Terminal, then log out and back in:
-```bash
-sudo dseditgroup -o create access_bpf
-sudo dseditgroup -o edit -a $(whoami) -t user access_bpf
-```
+### Windows Distributions
+| Method | Filename | SHA-256 Checksum |
+|--------|----------|------------------|
+| **Windows Installer** | `Vigilance_1.0.1_x64_en-US.msi` | `[PENDING]` |
+| **Portable (Zip)** | `Vigilance-Portable-v1.0.1.zip` | `[PENDING]` |
+
+> **macOS Note**: Packet capture requires BPF access. The portable binary **must** be run with `sudo ./vigilance-portable`.
 
 ## 🧠 Behavioral AI & Hybrid Guardian Engine
-Vigilance now features a **Hybrid Security Logic** that combines cloud intelligence with hardware-level speed:
 
 - **Guardian Core (Local Heuristics)**: 
-    - **Beaconing Detection**: Identification of fixed-interval heartbeats characteristic of C2 (Command & Control) malware.
-    - **Protocol Mismatch**: Detection of spoofed protocols (e.g., non-HTTP traffic on port 80/443).
-    - **Weighted Scoring**: Multi-factor risk analysis tracking timing, reputation, and port safety.
-- **AI Integration**: Optionally toggle **Gemini 3 Flash** for deep behavioral analysis. It classifies connections by looking at textual intent and process metadata.
-- **Automatic Fallback**: If run outside the Tauri shell, the app falls back to high-fidelity simulation mode for UI testing.
-
-## 🛠️ Roadmap
-1. **ETW Deep-Dive**: Migration from simple process detection to full Event Tracing for Windows (ETW) for 100% process-to-packet accuracy.
-2. **YARA Integration**: Future support for scanning memory buffers using YARA rules.
-3. **Multi-Interface Logic**: Enhanced multi-homed network interface simultaneous monitoring.
+    - **Beaconing Detection**: Now tuned to a 10s threshold to minimize false positives while catching active C2 heartbeats.
+    - **Protocol Mismatch**: Flags unusual activity like QUIC/UDP on standard web ports.
+- **Local Explanation Engine**: If an AI key is missing, Vigilance uses a built-in rule-based engine to explain threats based on Org, Country, and Port metadata.
 
 ---
 *Vigilance-Desktop - Production Grade Network Security.*
