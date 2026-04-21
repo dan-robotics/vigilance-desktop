@@ -47,17 +47,18 @@ To verify your download, run shasum -a 256 [filename] (macOS) or Get-FileHash [f
 
 | Platform / Architecture | Filename | SHA-256 Checksum |
 |-------------------------|----------|------------------|
-| **macOS Universal** | `Vigilance_1.0.1_universal.dmg` | `406feb056c41d709682debe2f71df5438b0a7e51839bf8ad7d2c3617c3f3e857` |
-| **Apple Silicon Native** | `Vigilance_1.0.1_aarch64.dmg` | `a00101919d67a5b3fb452c29398ac4b9ff2018edacaeeeaf61194eb889a7c56e` |
-| **Intel Native** | `Vigilance_1.0.1_x64.dmg` | `b54e3309f94fcd9058386b6d63cb134ff4bfd6e680782cca504158e455f29a92` |
-| **Universal Portable** | `vigilance-portable` | `3f2ade43b89f152d3c2b2453893346b4b6026564a30a655caa46dae735f2e86f` |
+| **macOS Universal** | `Vigilance_1.0.1_universal.dmg` | `[PASTE_HASH_HERE]` |
+| **Apple Silicon Native** | `Vigilance_1.0.1_aarch64.dmg` | `[PASTE_HASH_HERE]` |
+| **Intel Native** | `Vigilance_1.0.1_x64.dmg` | `[PASTE_HASH_HERE]` |
+| **Universal Portable** | `vigilance-portable` | `[PASTE_HASH_HERE]` |
 
 ## Windows Distributions
 | Method | Filename | SHA-256 Checksum |
 |--------|----------|------------------|
-| **Windows Installer** | `Vigilance_1.0.1_x64_en-US.msi` | `[7071A71EBE8BD54F180246F4917EB829C4B389491CC32975051009AB038B5A13]` |
-| **Windows Installer** | `Vigilance_1.0.1_x64-setup.exe` | `[D5D190865D6BE5BD054E8C618F2D2DD65EB4EEF07E782F9809D1119C3BCD8D4B]` |
-| **Portable (Zip)** | `Vigilance-Portable-v1.0.1.zip` | `[9F480132F58B5335CBC10953FDB912134D4A5FBFDEF0D7911120DEDB35A46871]` |
+| **Windows Installer** | `Vigilance_1.0.1_x64_en-US.msi` | `3E42E342052ECE457BC98F8250716DB7F6AFDDC5F7BBEDBE1A62F262B9A582DD` |
+| **Windows Installer** | `Vigilance_1.0.1_x64-setup.exe` | `4DF6A756A47C6DF78C9312530CD284470D97ED6E8AA0E87F1912FF1118597A71` |
+| **Portable (Zip)** | `Vigilance-Portable-v1.0.1.zip` | `01C9620547136BE2551396A32F0418A8B18A4A76A0B410C040A369BC5FE1BBE1` |
+
 
 **macOS Note**: 
 Packet capture requires BPF access. The portable binary **must** be run with `sudo ./vigilance-portable`.

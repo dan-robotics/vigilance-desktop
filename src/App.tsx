@@ -157,6 +157,7 @@ export default function App() {
   const [useCloudAi, setUseCloudAi] = useState(true);
   const [aiRequestCount, setAiRequestCount] = useState(0);
   const [aiQuotaError, setAiQuotaError] = useState<string | null>(null);
+  const [captureError, setCaptureError] = useState<string | null>(null);
   const [notificationsEnabled, setNotificationsEnabled] = useState(true);
   const [aiAnalysis, setAiAnalysis] = useState<Record<string, string>>({});
   const [firewallRules, setFirewallRules] = useState<string[]>([]);
@@ -496,6 +497,10 @@ export default function App() {
         if ((window as any).__TAURI_INTERNALS__) {
           setIsDesktop(true);
           
+          await listen<string>('capture-error', (event) => {
+            setCaptureError(event.payload);
+          });
+
           unlisten = await listen<NetworkEvent>('network-event', (event) => {
             if (isPausedRef.current) return;
             const data = event.payload;
@@ -562,7 +567,13 @@ export default function App() {
                   const label = parts ? `${parts}${geo.org ? ` — ${geo.org}` : ''}` : 'Unknown Location';
                   geoCacheRef.current[geoIp] = label;
                   setConnections(prev => prev.map(c => c.remoteAddr === geoIp ? { ...c, location: label } : c));
-                  setDetections(prev => prev.map(d => d.ip === geoIp ? { ...d, location: label } : d));
+                  setDetections(prev => prev.map(d => {
+                    if (d.ip !== geoIp) return d;
+                    if (!d.location && d.aiNote && !useCloudAiRef.current) {
+                      return { ...d, location: label, aiNote: localExplain(d.ip, d.port, '', label, d.reason) };
+                    }
+                    return { ...d, location: label };
+                  }));
                 })
                 .catch(() => { geoCacheRef.current[geoIp] = ''; });
             }
@@ -724,6 +735,16 @@ export default function App() {
 
         {/* --- Main Dashboard --- */}
         <main className="flex-1 overflow-y-auto p-8 custom-scrollbar relative">
+          {captureError && (
+            <div className="mb-4 px-4 py-3 bg-red-500/10 border border-red-500/30 rounded-xl flex items-start gap-3">
+              <AlertTriangle className="w-4 h-4 text-red-400 mt-0.5 shrink-0" />
+              <div className="flex-1 min-w-0">
+                <p className="text-xs font-semibold text-red-400">Capture Engine Error</p>
+                <p className="text-xs text-red-400/70 mt-0.5">{captureError}</p>
+              </div>
+              <button onClick={() => setCaptureError(null)} className="text-red-400/50 hover:text-red-400 text-xs shrink-0">✕</button>
+            </div>
+          )}
           <AnimatePresence mode="wait">
             {activeTab === 'live' ? (
               <motion.div 
@@ -971,12 +992,12 @@ export default function App() {
               <div>
                 <table className="w-full text-left border-collapse table-fixed">
                   <colgroup>
-                    <col className="w-10" />
-                    <col className="w-[26%]" />
-                    <col className="w-[26%]" />
+                    <col className="w-20" />
+                    <col className="w-[24%]" />
+                    <col className="w-[24%]" />
                     <col className="w-[18%]" />
                     <col className="w-[20%]" />
-                    <col className="w-20" />
+                    <col className="w-16" />
                   </colgroup>
                   <thead>
                     <tr className="border-b border-white/5 text-[10px] uppercase tracking-widest font-bold text-slate-500">

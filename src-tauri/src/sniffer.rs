@@ -233,7 +233,11 @@ pub fn start_active_probe(app: AppHandle) {
                 if combined.contains("virtual") || combined.contains("vmware")
                     || combined.contains("hyper-v") || combined.contains("vethernet")
                     || combined.contains("virtualbox") || combined.contains("tunnel")
-                    || combined.contains("bluetooth") || combined.contains("pseudo") {
+                    || combined.contains("bluetooth") || combined.contains("pseudo")
+                    || combined.contains("miniport") || combined.contains("wan ")
+                    || combined.contains("isatap") || combined.contains("teredo")
+                    || combined.contains("6to4") || combined.contains("loopback")
+                    || combined.contains("npcap loopback") {
                     return 0;
                 }
                 if combined.contains("wi-fi") || combined.contains("wifi")
@@ -247,19 +251,19 @@ pub fn start_active_probe(app: AppHandle) {
                 1
             }
 
-            let interfaces = datalink::interfaces();
+            let all_ifaces = datalink::interfaces();
             let interface = if let Some(ref name) = interface_name {
-                interfaces.into_iter().find(|iface| iface.name == *name)
+                all_ifaces.iter().find(|iface| iface.name == *name).cloned()
             } else {
-                let mut candidates: Vec<_> = datalink::interfaces()
-                    .into_iter()
+                let mut candidates: Vec<_> = all_ifaces.iter()
                     .filter(|iface| iface.is_up() && !iface.is_loopback() && !iface.ips.is_empty())
+                    .cloned()
                     .collect();
                 candidates.sort_by_key(|iface| Reverse(adapter_priority(iface)));
                 candidates.into_iter().next()
-            }
-            .or_else(|| datalink::interfaces().into_iter().find(|iface| !iface.is_loopback() && !iface.ips.is_empty()))
-            .or_else(|| datalink::interfaces().into_iter().next());
+                    .or_else(|| all_ifaces.iter().find(|iface| !iface.is_loopback() && !iface.ips.is_empty()).cloned())
+                    .or_else(|| all_ifaces.into_iter().next())
+            };
 
             let interface = match interface {
                 Some(i) => i,
@@ -277,12 +281,19 @@ pub fn start_active_probe(app: AppHandle) {
             let (_, mut rx) = match datalink::channel(&interface, Default::default()) {
                 Ok(Ethernet(tx, rx)) => (tx, rx),
                 Ok(_) => {
-                    std::thread::sleep(Duration::from_secs(1));
+                    let _ = app.emit("capture-error", format!(
+                        "Adapter '{}' returned a non-Ethernet channel — try selecting a different interface in Settings.",
+                        interface.description
+                    ));
+                    std::thread::sleep(Duration::from_secs(3));
                     continue;
                 },
                 Err(e) => {
-                    eprintln!("Failed to create channel: {}", e);
-                    std::thread::sleep(Duration::from_secs(1));
+                    let _ = app.emit("capture-error", format!(
+                        "Cannot open '{}': {} — Is Npcap installed with WinPcap compatibility mode? Try running as Administrator.",
+                        interface.description, e
+                    ));
+                    std::thread::sleep(Duration::from_secs(3));
                     continue;
                 }
             };

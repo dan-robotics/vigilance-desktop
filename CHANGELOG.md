@@ -1,5 +1,27 @@
 ## 📜 Changelog
 
+### 🔧 v1.0.1 — Windows Reliability Patch
+
+- **Fix — GeoIP Backfill**: Detection cards now retroactively update location and
+  regenerate the local AI explanation when GeoIP resolves after the alert fires.
+  Affected both platforms but was more visible on Windows due to faster detections.
+
+- **Fix — STATUS Column Overlap**: STATUS header was sized at 40px (w-10) — too
+  narrow for label and padding. Widened to 80px, adjacent columns adjusted.
+
+- **Fix — Windows Virtual Adapter Auto-Selection**: WAN Miniport, ISATAP, Teredo,
+  6to4, and Loopback adapters were slipping past the priority filter and being
+  selected over the real Wi-Fi or Ethernet interface. Exclusion list extended.
+
+- **Fix — Silent Capture Failures Now Visible**: When the capture engine fails to
+  open an adapter (permissions, wrong Npcap mode, bad interface), a red banner now
+  appears in the UI with the exact error. Previously this failed silently with no
+  indication to the user.
+
+- **Perf — Interface Enumeration**: Reduced `datalink::interfaces()` calls from 4
+  to 1 per capture loop iteration. Each call hits the Npcap NDIS driver on Windows.
+
+
 ### 🚀 v1.0.1
 - **Heuristics Fixes: Corrected beaconing thresholds (10s) and scoring mismatches. 
 

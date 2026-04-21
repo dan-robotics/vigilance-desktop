@@ -9,3 +9,4 @@ coverage/
 .secrets.*
 src-tauri/resources/config.json
 src-tauri/target/
+temp/
