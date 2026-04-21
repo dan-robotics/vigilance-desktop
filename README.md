@@ -20,9 +20,12 @@ To capture live packets, the backend requires access to BPF devices. You have tw
 This allows the sniffer to work without running the entire UI as root. Run this once per boot:
 ```bash
 sudo chown $(whoami) /dev/bpf*
+``` 
 
 If you prefer not to touch BPF permissions, run the binary with escalated privileges:
+```bash
 sudo -E ./node_modules/.bin/tauri dev
+``` 
 
 ## 💎 v1.0.1 Key Highlights
 Kernel Transparency: Transitioned from a generic "Guardian Kernel" label to specific decoding for ICMP, IGMP, OSPF, and GRE traffic.
