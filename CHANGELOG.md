@@ -1,35 +1,39 @@
 ## 📜 Changelog
 
-### 🔧 v1.0.1 — Windows Reliability Patch
+### 🚀 v1.0.1 — The Intelligence Update
 
-- **Fix — GeoIP Backfill**: Detection cards now retroactively update location and
-  regenerate the local AI explanation when GeoIP resolves after the alert fires.
-  Affected both platforms but was more visible on Windows due to faster detections.
+#### Protocol Intelligence
+- **Full Protocol Decoding**: The backend no longer emits `OTHER` for non-TCP/UDP packets. Named decoding added for IGMP (2), IPIP (4), GRE (47), ESP (50), AH (51), OSPF (89), PIM (103), VRRP (112), SCTP (132). Unknown protocol numbers fall back to `PROTO-N` format.
+- **Kernel Transparency**: System-level packets (ICMP, IGMP, GRE, OSPF, etc.) are grouped under "Guardian Kernel" in the UI with their protocol type visible in sub-rows as named badges.
 
-- **Fix — STATUS Column Overlap**: STATUS header was sized at 40px (w-10) — too
-  narrow for label and padding. Widened to 80px, adjacent columns adjusted.
+#### GeoIP Intelligence
+- **Live Location Lookups**: Every unique remote IP resolves asynchronously to City, Region, Country, and ISP/Organization via the `ipinfo.io` API. Results are cached per-session and applied to both the connection table and detection cards.
+- **Country Display**: Group header rows show a compact country code (e.g. `KR`, `US`) next to each endpoint. Sub-rows and detection cards show the full location string on hover.
 
-- **Fix — Windows Virtual Adapter Auto-Selection**: WAN Miniport, ISATAP, Teredo,
-  6to4, and Loopback adapters were slipping past the priority filter and being
-  selected over the real Wi-Fi or Ethernet interface. Exclusion list extended.
+#### AI Guardian (Auto-Explanation)
+- **Automatic Detection Analysis**: Every new detection (threat score ≥ 45) automatically triggers a Gemini 2.0 Flash request explaining what the IP likely belongs to and whether the traffic is worth investigating.
+- **Local Fallback Engine** (`localExplain`): When cloud AI is disabled or unavailable (missing key, quota exceeded), a built-in rule-based engine generates an explanation from GeoIP org/country, port semantics, and heuristic reason — no API required.
+- **Auto-Disable**: If the Gemini API key is missing or unreadable at startup, cloud AI is silently disabled and the local engine takes over immediately.
 
-- **Fix — Silent Capture Failures Now Visible**: When the capture engine fails to
-  open an adapter (permissions, wrong Npcap mode, bad interface), a red banner now
-  appears in the UI with the exact error. Previously this failed silently with no
-  indication to the user.
+#### Heuristics Engine
+- **Beaconing Threshold**: Tuned to 10 seconds minimum interval to balance sensitivity (catches active C2 heartbeats) without excessive false positives on normal keep-alive traffic.
+- **Multicast Filter**: Entire `224.0.0.0/4` range (mDNS, SSDP, IGMP multicast) excluded from scoring — returns score 0 and label "Multicast (Normal)".
+- **Deduplication**: Detection cards now have a 60-second cooldown per `IP:threatLabel` key, eliminating duplicate alerts for the same event from both Inbound and Outbound packet directions.
 
-- **Perf — Interface Enumeration**: Reduced `datalink::interfaces()` calls from 4
-  to 1 per capture loop iteration. Each call hits the Npcap NDIS driver on Windows.
+#### UI / Table Layout
+- **Static-Width Table**: Replaced fluid `overflow-x-auto` table with a `table-fixed` + `<colgroup>` layout. Columns have declared widths — no more horizontal scrolling regardless of how many protocols or how long the location string is.
+- **Protocol Badges**: Protocol column in group header rows now renders each protocol as an individual chip (`flex-wrap`) — badges stack vertically when a process uses many protocols (e.g. Guardian Kernel with ICMP/IGMP/GRE/OSPF), never pushing the table wider.
+- **Sub-row Density**: Compact `px-4` padding, `shortGeo()` country-only location inline (full string on hover via `title`), AI text clamped to 2 lines, threat label truncated with tooltip.
 
-
-### 🚀 v1.0.1
-- **Heuristics Fixes: Corrected beaconing thresholds (10s) and scoring mismatches. 
-
-- **Kernel Intelligence**: Transitioned from "Guardian Kernel" catch-all to specific protocol decoding (ICMP, IGMP, OSPF, etc.).
-
-- **Intelligence**: Integrated async GeoIP lookups and automatic Gemini AI explanations for threats.
-
-- **UI/UX**: Fixed table horizontal scrolling with a new static-width layout and stacking protocol badges.
+#### Fixes & Reliability
+- **Fix — GeoIP Backfill**: Detection cards retroactively update location and regenerate the local AI explanation when GeoIP resolves after the alert fires.
+- **Fix — Windows Virtual Adapter Auto-Selection**: WAN Miniport, ISATAP, Teredo, 6to4, and Loopback adapters excluded from the interface priority filter.
+- **Fix — Silent Capture Failures**: When the capture engine fails to open an adapter, the error is now surfaced in the UI. Previously failed silently.
+- **Fix — TypeScript Protocol Cast**: Removed stale `as 'TCP' | 'UDP'` cast on `data.protocol` — protocols like ICMP, GRE, OSPF were being silently mis-typed.
+- **Fix — Rust Compiler Warnings**: Resolved unused `mut` warning in `build.rs` using conditional compilation blocks.
+- **Fix — TypeScript Binary Artifacts**: Added `exclude: ["src-tauri"]` to `tsconfig.json` — stops the compiler from scanning Rust build artifacts in `src-tauri/target/`.
+- **Fix — npm tauri Script**: Added `"tauri": "tauri"` to `package.json` scripts so `npm run tauri dev` and `npm run tauri build` work correctly.
+- **Perf — Interface Enumeration**: Reduced `datalink::interfaces()` calls from 4 to 1 per capture loop iteration.
 
 ### 🚀 v0.2.2 - Mock Data Removal & macOS Support
 

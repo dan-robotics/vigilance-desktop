@@ -36,3 +36,67 @@ To regenerate the professional green shield branding:
 If blocking an IP fails:
 - Ensure no other security software (Third-party firewalls) is overriding Windows Firewall.
 - The app uses `netsh advfirewall` which requires administrative context.
+
+---
+
+## macOS Setup
+
+### 6. BPF Permission Error (macOS)
+Raw packet capture requires access to `/dev/bpf*`. Without it the app starts in Simulation Mode.
+
+**Option A — Grant access for the current session (run once per boot):**
+```bash
+sudo chown $(whoami) /dev/bpf*
+npm run tauri dev
+```
+
+**Option B — Persistent group membership (survives reboots):**
+```bash
+sudo dseditgroup -o create access_bpf
+sudo dseditgroup -o edit -a $(whoami) -t user access_bpf
+```
+Log out and back in. The app runs without sudo after that.
+
+**Option C — Run the binary directly as root:**
+```bash
+sudo /Applications/Vigilance.app/Contents/MacOS/vigilance
+```
+
+### 7. pfctl Firewall Blocking Requires sudo (macOS)
+The `block_ip` command uses `pfctl` under the hood. To allow passwordless blocking, add a sudoers entry:
+
+```bash
+sudo visudo -f /private/etc/sudoers.d/vigilance
+```
+
+Add this line (replace `your_username`):
+```
+your_username ALL=(ALL) NOPASSWD: /sbin/pfctl
+```
+
+### 8. lsof Not Resolving Process Names (macOS)
+The process resolver polls `lsof` every 3 seconds. If all connections show "Guardian Kernel" instead of real process names:
+
+1. Ensure the app has **Full Disk Access** in **System Settings → Privacy & Security → Full Disk Access**.
+2. Verify `lsof` is available: `which lsof` should return `/usr/sbin/lsof`.
+3. On Apple Silicon, confirm Rosetta is not interfering if running an Intel build.
+
+### 9. Building for macOS (All Targets)
+
+```bash
+# Apple Silicon
+npm run tauri build -- --target aarch64-apple-darwin
+
+# Intel
+rustup target add x86_64-apple-darwin
+npm run tauri build -- --target x86_64-apple-darwin
+
+# Universal (both in one .dmg)
+rustup target add aarch64-apple-darwin x86_64-apple-darwin
+npm run tauri build -- --target universal-apple-darwin
+
+# Portable zip (run after any build)
+cd src-tauri/target/release/bundle/macos && zip -r ~/Desktop/Vigilance-Portable-mac.zip Vigilance.app
+```
+
+Build output: `src-tauri/target/release/bundle/macos/Vigilance.app` and `src-tauri/target/release/bundle/dmg/`.

@@ -20,12 +20,18 @@ To capture live packets, the backend requires access to BPF devices. You have tw
 This allows the sniffer to work without running the entire UI as root. Run this once per boot:
 ```bash
 sudo chown $(whoami) /dev/bpf*
-``` 
+```
 
-If you prefer not to touch BPF permissions, run the binary with escalated privileges:
+Then start the app normally:
 ```bash
-sudo -E ./node_modules/.bin/tauri dev
-``` 
+npm run tauri dev
+```
+
+### Option B: Run as Root
+If you prefer not to touch BPF permissions:
+```bash
+sudo /Applications/Vigilance.app/Contents/MacOS/vigilance
+```
 
 ## 💎 v1.0.1 Key Highlights
 Kernel Transparency: Transitioned from a generic "Guardian Kernel" label to specific decoding for ICMP, IGMP, OSPF, and GRE traffic.
@@ -47,10 +53,10 @@ To verify your download, run shasum -a 256 [filename] (macOS) or Get-FileHash [f
 
 | Platform / Architecture | Filename | SHA-256 Checksum |
 |-------------------------|----------|------------------|
-| **macOS Universal** | `Vigilance_1.0.1_universal.dmg` | `[PASTE_HASH_HERE]` |
-| **Apple Silicon Native** | `Vigilance_1.0.1_aarch64.dmg` | `[PASTE_HASH_HERE]` |
-| **Intel Native** | `Vigilance_1.0.1_x64.dmg` | `[PASTE_HASH_HERE]` |
-| **Universal Portable** | `vigilance-portable` | `[PASTE_HASH_HERE]` |
+| **macOS Universal** | `Vigilance_1.0.1_universal.dmg` | `pending` |
+| **Apple Silicon Native** | `Vigilance_1.0.1_aarch64.dmg` | `pending` |
+| **Intel Native** | `Vigilance_1.0.1_x64.dmg` | `pending` |
+| **macOS Portable (Zip)** | `Vigilance-Portable-mac.zip` | `7397ab810f94605f1d3bba8bab777276f625c985b331f54740236cb710e9b8b9` |
 
 ## Windows Distributions
 | Method | Filename | SHA-256 Checksum |
