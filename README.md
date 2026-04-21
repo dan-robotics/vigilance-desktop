@@ -55,7 +55,7 @@ To verify your download, run shasum -a 256 [filename] (macOS) or Get-FileHash [f
 |-------------------------|----------|------------------|
 | **macOS Universal** | `Vigilance_1.0.1_universal.dmg` | `47a3914e2de432d52895782e9b9d9f6e79b3ee54d8cdac89f0422e25badb3a8d` |
 | **Apple Silicon Native** | `Vigilance_1.0.1_aarch64.dmg` | `b3fd1b9e9a39e9504da8c08fe306b9d7426466ffebdeac06f703a90c99c8b959` |
-| **Intel Native** | `Vigilance_1.0.1_x64.dmg` | `pend5ba54a19bd01e0fb459a0d94384fcc642544c0c27eb7c38b489fdb54e1fe17d1ing` |
+| **Intel Native** | `Vigilance_1.0.1_x64.dmg` | `5ba54a19bd01e0fb459a0d94384fcc642544c0c27eb7c38b489fdb54e1fe17d1` |
 | **macOS Portable (Zip)** | `Vigilance-Portable-mac.zip` | `7397ab810f94605f1d3bba8bab777276f625c985b331f54740236cb710e9b8b9` |
 
 ## Windows Distributions

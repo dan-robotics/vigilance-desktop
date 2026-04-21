@@ -1,0 +1,90 @@
+<h2>🚀 Vigilance v1.0.1 — The Intelligence Update</h2>
+
+<p>
+  Vigilance has officially moved from prototype to a <strong>production-grade security engine</strong>.
+  This release introduces <strong>Real-time Protocol Decoding</strong>, <strong>GeoIP Intelligence</strong>,
+  and <strong>AI-Powered Threat Analysis</strong>, transforming raw network data into actionable security intelligence.
+</p>
+
+<h3>💎 Key Highlights</h3>
+<ul>
+  <li><strong>Kernel Transparency:</strong> Replaced the generic "Guardian Kernel" label with specific decoding for ICMP, IGMP, GRE, ESP, AH, OSPF, PIM, VRRP, SCTP — and a <code>PROTO-N</code> fallback for any unknown IP protocol number.</li>
+  <li><strong>GeoIP Intelligence:</strong> Live async location lookups identify the City, Country, and ISP/Organization (e.g. AWS, Korea Telecom, Rostelecom) for every connection and detection card.</li>
+  <li><strong>AI Guardian:</strong> Every new detection automatically triggers a Gemini 2.0 Flash explanation. When AI is unavailable, a built-in local engine generates context from GeoIP, port semantics, and heuristic data — no API key required.</li>
+  <li><strong>Detection Deduplication:</strong> 60-second cooldown per <code>IP:reason</code> pair eliminates duplicate alerts from bidirectional packet capture.</li>
+  <li><strong>Static-Width Table:</strong> Process Activity Feed now uses a fixed-column layout with protocol badges that stack vertically — no more horizontal scrolling.</li>
+  <li><strong>Universal Compatibility:</strong> Optimized builds for all modern macOS (Universal, Apple Silicon, Intel) and Windows architectures.</li>
+</ul>
+
+<h3>🔒 Security &amp; Permissions (macOS)</h3>
+<p>
+  To capture live network traffic, Vigilance requires BPF (Berkeley Packet Filter) access.<br>
+  <strong>Recommended:</strong> Grant BPF access to your user once per boot — avoids running the entire app as root:
+</p>
+<pre><code>sudo chown $(whoami) /dev/bpf*</code></pre>
+<p>Then launch normally: open <code>Vigilance.app</code> (production) or <code>npm run tauri dev</code> (dev).</p>
+<p>Alternative — run the binary directly as root:</p>
+<pre><code>sudo /Applications/Vigilance.app/Contents/MacOS/vigilance</code></pre>
+
+<h3>📦 Binary Downloads &amp; Verifications</h3>
+<p>
+  To verify your download:<br>
+  <strong>macOS:</strong> <code>shasum -a 256 [filename]</code><br>
+  <strong>Windows:</strong> <code>certutil -hashfile [filename] SHA256</code><br>
+  Compare the output against the table below.
+</p>
+
+<table border="1" style="width:100%; border-collapse: collapse; text-align: left;">
+  <thead style="background-color: #f6f8fa;">
+    <tr>
+      <th style="padding: 10px;">Platform / Architecture</th>
+      <th style="padding: 10px;">Filename</th>
+      <th style="padding: 10px;">SHA-256 Checksum</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td style="padding: 10px;"><strong>macOS Universal</strong><br><small>(Intel + Apple Silicon)</small></td>
+      <td style="padding: 10px;"><code>Vigilance_1.0.1_universal.dmg</code></td>
+      <td style="padding: 10px;"><code style="background: #fffbdd;">47a3914e2de432d52895782e9b9d9f6e79b3ee54d8cdac89f0422e25badb3a8d</code></td>
+    </tr>
+    <tr>
+      <td style="padding: 10px;"><strong>macOS Apple Silicon</strong><br><small>(M1 / M2 / M3 / M4 Native)</small></td>
+      <td style="padding: 10px;"><code>Vigilance_1.0.1_aarch64.dmg</code></td>
+      <td style="padding: 10px;"><code style="background: #fffbdd;">b3fd1b9e9a39e9504da8c08fe306b9d7426466ffebdeac06f703a90c99c8b959</code></td>
+    </tr>
+    <tr>
+      <td style="padding: 10px;"><strong>macOS Intel</strong><br><small>(x64 Native)</small></td>
+      <td style="padding: 10px;"><code>Vigilance_1.0.1_x64.dmg</code></td>
+      <td style="padding: 10px;"><code style="background: #fffbdd;">5ba54a19bd01e0fb459a0d94384fcc642544c0c27eb7c38b489fdb54e1fe17d1</code></td>
+    </tr>
+    <tr>
+      <td style="padding: 10px;"><strong>macOS Portable</strong><br><small>(Zip — drag &amp; run anywhere)</small></td>
+      <td style="padding: 10px;"><code>Vigilance-Portable-mac.zip</code></td>
+      <td style="padding: 10px;"><code style="background: #fffbdd;">7397ab810f94605f1d3bba8bab777276f625c985b331f54740236cb710e9b8b9</code></td>
+    </tr>
+    <tr>
+      <td style="padding: 10px;"><strong>Windows MSI</strong><br><small>(Standard Installer)</small></td>
+      <td style="padding: 10px;"><code>Vigilance_1.0.1_x64_en-US.msi</code></td>
+      <td style="padding: 10px;"><code style="background: #e7f3ff;">3E42E342052ECE457BC98F8250716DB7F6AFDDC5F7BBEDBE1A62F262B9A582DD</code></td>
+    </tr>
+    <tr>
+      <td style="padding: 10px;"><strong>Windows Setup</strong><br><small>(NSIS Executable)</small></td>
+      <td style="padding: 10px;"><code>Vigilance_1.0.1_x64-setup.exe</code></td>
+      <td style="padding: 10px;"><code style="background: #e7f3ff;">4DF6A756A47C6DF78C9312530CD284470D97ED6E8AA0E87F1912FF1118597A71</code></td>
+    </tr>
+    <tr>
+      <td style="padding: 10px;"><strong>Windows Portable</strong><br><small>(Zip Archive)</small></td>
+      <td style="padding: 10px;"><code>Vigilance-Portable-v1.0.1.zip</code></td>
+      <td style="padding: 10px;"><code style="background: #e7f3ff;">01C9620547136BE2551396A32F0418A8B18A4A76A0B410C040A369BC5FE1BBE1</code></td>
+    </tr>
+  </tbody>
+</table>
+
+<p>
+  <br>
+  <i><strong>Note:</strong> Admin/sudo privileges are required on all platforms to access low-level network drivers and BPF devices.</i>
+</p>
+
+<hr />
+<p align="center">🛡️ <strong>Vigilance — Built for privacy. Powered by Daniel Andries.</strong></p>
