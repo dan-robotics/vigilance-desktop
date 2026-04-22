@@ -1,6 +1,8 @@
 # Vigilance-Desktop: Network Monitoring & Security Shield
 
-https://github.com/user-attachments/assets/4f626fc0-d0f5-461b-8e2a-33757ab97c05
+
+<img width="2106" height="1184" alt="vigilance-app-record" src="https://github.com/user-attachments/assets/4269212a-c45e-437e-ab24-890f78f226a7" />
+
 
 **Current Release: v2.1.0 Stable — The AI Clarity Update** — [Changelog](./CHANGELOG.md)
 
