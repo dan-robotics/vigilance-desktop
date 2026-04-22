@@ -8,7 +8,6 @@ use pnet::packet::udp::UdpPacket;
 use pnet::packet::Packet;
 use serde::{Serialize, Deserialize};
 use tauri::{AppHandle, Emitter};
-use std::cmp::Reverse;
 use std::process::Command;
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
@@ -463,77 +462,22 @@ pub fn start_active_probe(app: AppHandle) {
         let mut last_emit = Instant::now();
 
         loop {
-            // Find interface to capture on
-            let interface_name = {
-                let guard = SELECTED_INTERFACE.lock().unwrap();
-                guard.clone()
+            // Wait for the frontend to pick an interface — it always does on init.
+            // Never auto-select: on installed builds WebView2 takes 1-3s to cold-start,
+            // and an early wrong guess races rx.next() blocking before the correction lands.
+            let name = match SELECTED_INTERFACE.lock().unwrap().clone() {
+                Some(n) => n,
+                None => {
+                    std::thread::sleep(Duration::from_millis(200));
+                    continue;
+                }
             };
-
-            fn adapter_priority(iface: &datalink::NetworkInterface) -> i32 {
-                let name = iface.name.to_lowercase();
-                let combined = format!("{} {}", name, iface.description.to_lowercase());
-
-                // Skip virtual / tunnel / special adapters
-                // Windows keywords
-                if combined.contains("virtual") || combined.contains("vmware")
-                    || combined.contains("hyper-v") || combined.contains("vethernet")
-                    || combined.contains("virtualbox") || combined.contains("tunnel")
-                    || combined.contains("bluetooth") || combined.contains("pseudo")
-                    || combined.contains("miniport") || combined.contains("wan ")
-                    || combined.contains("isatap") || combined.contains("teredo")
-                    || combined.contains("6to4") || combined.contains("npcap loopback")
-                    || combined.contains("vpn") || combined.contains("cisco")
-                    || combined.contains("juniper") || combined.contains("fortinet")
-                    || combined.contains("tap-") || combined.contains("tun0")
-                    // macOS tunnel / virtual interface name prefixes
-                    || name.starts_with("utun")   // VPN, iCloud Private Relay
-                    || name.starts_with("awdl")   // Apple Wireless Direct Link
-                    || name.starts_with("llw")    // Low Latency WLAN
-                    || name.starts_with("p2p")    // Wi-Fi P2P
-                    || name.starts_with("bridge") // macOS bridge
-                    || name.starts_with("gif")    // IPv6-in-IPv4 tunnel
-                    || name.starts_with("stf")    // 6to4 tunnel
-                    || name.starts_with("anpi")   // Apple Network Proxy Interface
-                    || name == "lo0"              // loopback (redundant but explicit)
-                {
-                    return 0;
-                }
-
-                // Wi-Fi: Windows description keywords OR macOS en0 (primary Wi-Fi/Ethernet)
-                if combined.contains("wi-fi") || combined.contains("wifi")
-                    || combined.contains("wlan") || combined.contains("wireless")
-                    || combined.contains("802.11") || name == "en0" {
-                    return 3;
-                }
-
-                // Ethernet: Windows keywords OR macOS en1/en2/en3 secondary adapters
-                if combined.contains("ethernet") || combined.contains(" lan")
-                    || (name.starts_with("en") && name.len() <= 3) {
-                    return 2;
-                }
-
-                1
-            }
 
             let all_ifaces = datalink::interfaces();
-            let interface = if let Some(ref name) = interface_name {
-                all_ifaces.iter().find(|iface| iface.name == *name).cloned()
-            } else {
-                let mut candidates: Vec<_> = all_ifaces.iter()
-                    .filter(|iface| iface.is_up() && !iface.is_loopback() && !iface.ips.is_empty()
-                        && adapter_priority(iface) > 0)
-                    .cloned()
-                    .collect();
-                candidates.sort_by_key(|iface| Reverse(adapter_priority(iface)));
-                candidates.into_iter().next()
-                    .or_else(|| all_ifaces.iter().find(|iface| !iface.is_loopback() && !iface.ips.is_empty()).cloned())
-                    .or_else(|| all_ifaces.into_iter().next())
-            };
-
-            let interface = match interface {
+            let interface = match all_ifaces.iter().find(|iface| iface.name == name).cloned() {
                 Some(i) => i,
                 None => {
-                    std::thread::sleep(Duration::from_secs(2));
+                    std::thread::sleep(Duration::from_millis(500));
                     continue;
                 }
             };
