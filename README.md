@@ -70,9 +70,9 @@ To verify your download, run shasum -a 256 [filename] (macOS) or Get-FileHash [f
 ## Windows Distributions
 | Method | Filename | SHA-256 Checksum |
 |--------|----------|------------------|
-| **Windows Installer** | `Vigilance_2.1.1_x64_en-US.msi` | sha256:9a51fa29ce7a694afac2ba64065c3cc55e4bd3605b81ded1fb53d453332b9a2b |
-| **Windows Installer** | `Vigilance_2.1.1_x64-setup.exe` | sha256:e13a0db7d5bcc13bc8c01e0e0bce03b71645b90df4cf0f96bf40411acca8adb5 |
-| **Portable (Zip)** | `Vigilance-Portable-v2.1.1.zip` | sha256:a0d4c91f9055031c6e18b9da4fa7f3733fe7908a2e0db3ae3bb5c895ea35e8a2 |
+| **Windows Installer** | `Vigilance_2.1.1_x64_en-US.msi` | sha256:f22c3bd865194dfd0525a3b3c9aaeb96c793e985e0eeca9bd5e3f0a333dbc084 |
+| **Windows Installer** | `Vigilance_2.1.1_x64-setup.exe` | sha256:7ef31f3619de6fa52bdb31a1b39337406169db60e22873dca7ae25b2adf5c299 |
+| **Portable (Zip)** | `Vigilance-Portable-v2.1.1.zip` | sha256:3fd7fd34872eab055e0d3889e14825ca5bd2858543eb2387336933bd96ae3a77 |
 
 
 **macOS Note**: 
