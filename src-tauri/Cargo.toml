@@ -1,6 +1,6 @@
 [package]
 name = "vigilance"
-version = "2.1.0"
+version = "2.1.1"
 description = "Vigilance Network Security Shield"
 authors = ["Daniel Andries"]
 edition = "2021"
@@ -20,7 +20,7 @@ sysinfo = "0.30"
 lazy_static = "1.4"
 rfd = "0.14"
 csv = "1.3"
-reqwest = { version = "0.11", features = ["json"] }
+reqwest = { version = "0.11", features = ["json", "rustls-tls"], default-features = false }
 
 [profile.release]
 panic = "abort" # Strip expensive panic info

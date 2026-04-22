@@ -4,7 +4,7 @@
 <img width="2106" height="1184" alt="vigilance-app-record" src="https://github.com/user-attachments/assets/4269212a-c45e-437e-ab24-890f78f226a7" />
 
 
-**Current Release: v2.1.0 Stable — The AI Clarity Update** — [Changelog](./CHANGELOG.md)
+**Current Release: v2.1.1 Stable — The AI Clarity Update** — [Changelog](./CHANGELOG.md)
 
 Vigilance-Desktop has officially moved from prototype to a **production-grade security engine**. It provides real-time visibility into network traffic, automated AI threat analysis, and kernel-level protocol transparency through a unified Desktop experience.
 
@@ -35,7 +35,7 @@ If you prefer not to touch BPF permissions:
 sudo /Applications/Vigilance.app/Contents/MacOS/vigilance
 ```
 
-## 💎 v2.1.0 Key Highlights
+## 💎 v2.1.1 Key Highlights
 
 **Per-Detection AI Analysis**: Each detection card in the Guardian and Notifications tabs now has its own **Ask AI** button. Click it to send that specific detection to Gemini and get a targeted 1–2 sentence assessment written directly into the card.
 
@@ -62,17 +62,17 @@ To verify your download, run shasum -a 256 [filename] (macOS) or Get-FileHash [f
 
 | Platform / Architecture | Filename | SHA-256 Checksum |
 |-------------------------|----------|------------------|
-| **macOS Universal** | `Vigilance_2.1.0_universal.dmg` |  |
-| **Apple Silicon Native** | `Vigilance_2.1.0_aarch64.dmg` |  |
-| **Intel Native** | `Vigilance_2.1.0_x64.dmg` |  |
-| **macOS Portable (Zip)** | `Vigilance-Portable-mac-v2.1.0.zip` |  |
+| **macOS Universal** | `Vigilance_2.1.1_universal.dmg` |  |
+| **Apple Silicon Native** | `Vigilance_2.1.1_aarch64.dmg` |  |
+| **Intel Native** | `Vigilance_2.1.1_x64.dmg` |  |
+| **macOS Portable (Zip)** | `Vigilance-Portable-mac-v2.1.1.zip` |  |
 
 ## Windows Distributions
 | Method | Filename | SHA-256 Checksum |
 |--------|----------|------------------|
-| **Windows Installer** | `Vigilance_2.1.0_x64_en-US.msi` |  |
-| **Windows Installer** | `Vigilance_2.1.0_x64-setup.exe` |  |
-| **Portable (Zip)** | `Vigilance-Portable-v2.1.0.zip` |  |
+| **Windows Installer** | `Vigilance_2.1.1_x64_en-US.msi` |  |
+| **Windows Installer** | `Vigilance_2.1.1_x64-setup.exe` |  |
+| **Portable (Zip)** | `Vigilance-Portable-v2.1.1.zip` |  |
 
 
 **macOS Note**: 

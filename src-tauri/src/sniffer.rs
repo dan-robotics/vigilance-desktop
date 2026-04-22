@@ -25,6 +25,8 @@ lazy_static::lazy_static! {
     static ref PORT_MAP: Mutex<HashMap<u16, (u32, String)>> = Mutex::new(HashMap::new());
     static ref GEO_CACHE: Mutex<HashMap<String, GeoInfo>> = Mutex::new(HashMap::new());
     static ref GEO_IN_FLIGHT: Mutex<HashSet<String>> = Mutex::new(HashSet::new());
+    // IPs that couldn't be resolved this session — skip retrying until next launch
+    static ref GEO_FAILED: Mutex<HashSet<String>> = Mutex::new(HashSet::new());
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -159,27 +161,130 @@ fn parse_asn_org(raw: &str) -> (String, String) {
     ("".to_string(), raw.to_string())
 }
 
+fn geo_cache_path() -> std::path::PathBuf {
+    #[cfg(target_os = "macos")]
+    {
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+        std::path::PathBuf::from(home).join(".vigilance_geo_cache.json")
+    }
+    #[cfg(windows)]
+    {
+        let base = std::env::var("LOCALAPPDATA")
+            .unwrap_or_else(|_| std::env::temp_dir().to_string_lossy().into_owned());
+        let dir = std::path::PathBuf::from(base).join("Vigilance");
+        let _ = std::fs::create_dir_all(&dir);
+        dir.join("geo_cache.json")
+    }
+    #[cfg(not(any(target_os = "macos", windows)))]
+    { std::env::temp_dir().join("vigilance_geo_cache.json") }
+}
+
+fn load_geo_disk_cache() {
+    if let Ok(data) = std::fs::read_to_string(geo_cache_path()) {
+        if let Ok(map) = serde_json::from_str::<HashMap<String, GeoInfo>>(&data) {
+            *GEO_CACHE.lock().unwrap() = map;
+        }
+    }
+}
+
+fn save_geo_disk_cache() {
+    if let Ok(data) = serde_json::to_string(&*GEO_CACHE.lock().unwrap()) {
+        let _ = std::fs::write(geo_cache_path(), data);
+    }
+}
+
 /// Resolve a single IP (IPv4 or IPv6) to GeoInfo.
-/// Tries ipinfo.io first, falls back to ip-api.com.
+/// Tries 6 providers in order, stopping at the first that returns a country_code.
 async fn resolve_geo_ip(client: &reqwest::Client, ip: &str) -> Option<GeoInfo> {
-    // Primary: ipinfo.io — handles both IPv4 and IPv6
+    // 1. ipinfo.io — primary (50K req/month free, HTTPS)
     let url = format!("https://ipinfo.io/{}/json", ip);
     if let Ok(resp) = client.get(&url).send().await {
         if resp.status().is_success() {
             if let Ok(json) = resp.json::<serde_json::Value>().await {
                 let country_code = json["country"].as_str().unwrap_or("").to_string();
-                let org_full     = json["org"].as_str().unwrap_or("").to_string();
-                if !country_code.is_empty() || !org_full.is_empty() {
+                if !country_code.is_empty() {
                     let city   = json["city"].as_str().unwrap_or("").to_string();
                     let region = json["region"].as_str().unwrap_or("").to_string();
-                    let (asn, org) = parse_asn_org(&org_full);
+                    let (asn, org) = parse_asn_org(json["org"].as_str().unwrap_or(""));
                     return Some(GeoInfo { city, region, country_code, asn, org });
                 }
             }
         }
     }
 
-    // Fallback: ip-api.com — also handles IPv6
+    // 2. ipapi.co — 1K req/day free, HTTPS
+    let url = format!("https://ipapi.co/{}/json/", ip);
+    if let Ok(resp) = client.get(&url).send().await {
+        if resp.status().is_success() {
+            if let Ok(json) = resp.json::<serde_json::Value>().await {
+                if json["error"].as_bool() != Some(true) {
+                    let country_code = json["country_code"].as_str().unwrap_or("").to_string();
+                    if !country_code.is_empty() {
+                        let city   = json["city"].as_str().unwrap_or("").to_string();
+                        let region = json["region"].as_str().unwrap_or("").to_string();
+                        let asn    = json["asn"].as_str().unwrap_or("").to_string();
+                        let org_raw = json["org"].as_str().unwrap_or("").to_string();
+                        let (_, org) = parse_asn_org(&org_raw);
+                        return Some(GeoInfo { city, region, country_code, asn, org });
+                    }
+                }
+            }
+        }
+    }
+
+    // 3. ipwhois.app — no stated limit, HTTPS
+    let url = format!("https://ipwhois.app/json/{}", ip);
+    if let Ok(resp) = client.get(&url).send().await {
+        if resp.status().is_success() {
+            if let Ok(json) = resp.json::<serde_json::Value>().await {
+                if json["success"].as_bool() != Some(false) {
+                    let country_code = json["country_code"].as_str().unwrap_or("").to_string();
+                    if !country_code.is_empty() {
+                        let city   = json["city"].as_str().unwrap_or("").to_string();
+                        let region = json["region"].as_str().unwrap_or("").to_string();
+                        let (asn, org) = parse_asn_org(json["isp"].as_str().unwrap_or(""));
+                        return Some(GeoInfo { city, region, country_code, asn, org });
+                    }
+                }
+            }
+        }
+    }
+
+    // 4. api.ip.sb — no key required, HTTPS (asn is numeric)
+    let url = format!("https://api.ip.sb/geoip/{}", ip);
+    if let Ok(resp) = client.get(&url).send().await {
+        if resp.status().is_success() {
+            if let Ok(json) = resp.json::<serde_json::Value>().await {
+                let country_code = json["country_code"].as_str().unwrap_or("").to_string();
+                if !country_code.is_empty() {
+                    let city   = json["city"].as_str().unwrap_or("").to_string();
+                    let region = json["region"].as_str().unwrap_or("").to_string();
+                    let asn    = json["asn"].as_u64().map(|n| format!("AS{}", n)).unwrap_or_default();
+                    let org    = json["asn_organization"].as_str().unwrap_or("").to_string();
+                    return Some(GeoInfo { city, region, country_code, asn, org });
+                }
+            }
+        }
+    }
+
+    // 5. geojs.io — no key, no stated limit, HTTPS
+    let url = format!("https://get.geojs.io/v1/ip/geo/{}.json", ip);
+    if let Ok(resp) = client.get(&url).send().await {
+        if resp.status().is_success() {
+            if let Ok(json) = resp.json::<serde_json::Value>().await {
+                let country_code = json["country_code"].as_str().unwrap_or("").to_string();
+                if !country_code.is_empty() {
+                    let city   = json["city"].as_str().unwrap_or("").to_string();
+                    let region = json["region"].as_str().unwrap_or("").to_string();
+                    let asn    = json["asn"].as_str().unwrap_or("").to_string();
+                    let org    = json["organization_name"].as_str().unwrap_or("").to_string();
+                    return Some(GeoInfo { city, region, country_code, asn, org });
+                }
+            }
+        }
+    }
+
+    // 6. ip-api.com — last resort (HTTP only on free tier, 45 req/min)
     let url = format!(
         "http://ip-api.com/json/{}?fields=status,country,countryCode,regionName,city,as,org",
         ip
@@ -204,11 +309,12 @@ async fn resolve_geo_ip(client: &reqwest::Client, ip: &str) -> Option<GeoInfo> {
 }
 
 pub fn start_active_probe(app: AppHandle) {
-    // GeoIP Resolution Thread — concurrent lookups, IPv4 + IPv6, dual provider
+    // GeoIP Resolution Thread — concurrent lookups, IPv4 + IPv6, 6-provider fallback chain
     let geo_app = app.clone();
     std::thread::spawn(move || {
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
+            load_geo_disk_cache();
             let client = reqwest::Client::builder()
                 .timeout(Duration::from_secs(5))
                 .user_agent("Vigilance/1.0")
@@ -216,12 +322,13 @@ pub fn start_active_probe(app: AppHandle) {
                 .unwrap_or_else(|_| reqwest::Client::new());
 
             loop {
-                // Collect pending IPs that aren't already resolved
+                // Collect pending IPs that aren't cached or known-failed
                 let pending: Vec<String> = {
-                    let flight = GEO_IN_FLIGHT.lock().unwrap();
-                    let cache  = GEO_CACHE.lock().unwrap();
+                    let flight  = GEO_IN_FLIGHT.lock().unwrap();
+                    let cache   = GEO_CACHE.lock().unwrap();
+                    let failed  = GEO_FAILED.lock().unwrap();
                     flight.iter()
-                        .filter(|ip| !cache.contains_key(*ip))
+                        .filter(|ip| !cache.contains_key(*ip) && !failed.contains(*ip))
                         .cloned()
                         .take(8) // max 8 concurrent per tick — friendly to free-tier rate limits
                         .collect()
@@ -237,6 +344,7 @@ pub fn start_active_probe(app: AppHandle) {
                         })
                     }).collect();
 
+                    let mut had_new = false;
                     for handle in handles {
                         if let Ok((ip, geo)) = handle.await {
                             if let Some(info) = geo {
@@ -248,13 +356,20 @@ pub fn start_active_probe(app: AppHandle) {
                                     }
                                     cache.insert(ip.clone(), info.clone());
                                 }
+                                had_new = true;
                                 let _ = geo_app.emit("geo-resolved", serde_json::json!({
                                     "ip": ip,
                                     "geo": info
                                 }));
+                            } else {
+                                // All providers failed — don't retry this session
+                                GEO_FAILED.lock().unwrap().insert(ip.clone());
                             }
                             GEO_IN_FLIGHT.lock().unwrap().remove(&ip);
                         }
+                    }
+                    if had_new {
+                        save_geo_disk_cache();
                     }
                 }
 
@@ -428,7 +543,11 @@ pub fn start_active_probe(app: AppHandle) {
                 .map(|ip| ip.ip().to_string())
                 .collect();
 
-            let (_, mut rx) = match datalink::channel(&interface, Default::default()) {
+            let channel_cfg = pnet::datalink::Config {
+                read_timeout: Some(Duration::from_millis(100)),
+                ..Default::default()
+            };
+            let (_, mut rx) = match datalink::channel(&interface, channel_cfg) {
                 Ok(Ethernet(tx, rx)) => (tx, rx),
                 Ok(_) => {
                     let _ = app.emit("capture-error", format!(
@@ -571,7 +690,7 @@ pub fn start_active_probe(app: AppHandle) {
                                                     && !remote_addr.starts_with("fe80"))
                                                 .unwrap_or(false)
                                         });
-                                    if is_public {
+                                    if is_public && !GEO_FAILED.lock().unwrap().contains(&remote_addr) {
                                         GEO_IN_FLIGHT.lock().unwrap().insert(remote_addr.clone());
                                     }
                                 }
@@ -636,9 +755,8 @@ pub fn start_active_probe(app: AppHandle) {
                         }
                         }
                     }
-                    Err(_e) => {
-                        std::thread::sleep(Duration::from_millis(10));
-                    }
+                    Err(ref e) if e.kind() == std::io::ErrorKind::TimedOut => {}
+                    Err(_e) => { std::thread::sleep(Duration::from_millis(10)); }
                 }
             }
         }

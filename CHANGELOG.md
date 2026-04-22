@@ -1,5 +1,16 @@
 ## 📜 Changelog
 
+### 🔧 v2.1.1 — GeoIP Reliability Update
+
+#### GeoIP — 6-Provider Fallback Chain
+- **5 additional geo providers**: ipinfo.io remains primary. If it fails or rate-limits, the app now automatically falls through ipapi.co → ipwhois.app → api.ip.sb → geojs.io → ip-api.com. All providers are free with no API key required. All except the last resort (ip-api.com) use HTTPS.
+- **Cross-platform TLS fix**: Switched from implicit native-tls to `rustls-tls` (embedded Mozilla root certificate bundle). Eliminates silent TLS failures on Windows where the OS Schannel could reject connections that macOS accepts. Geo resolution now behaves identically on both platforms.
+
+#### Version
+- **v2.1.1** unified across `package.json`, `Cargo.toml`, `tauri.conf.json`, About dialog, and `README.txt`.
+
+---
+
 ### 🚀 v2.1.0 — The AI Clarity Update (Stable)
 
 #### AI — Per-Detection Analysis
