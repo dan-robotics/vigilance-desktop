@@ -54,19 +54,19 @@ To verify your download, run shasum -a 256 [filename] (macOS) or Get-FileHash [f
 
 **macOS Distributions**: 
 
-| Platform / Architecture | Filename | SHA-256 Checksum |
-|-------------------------|----------|------------------|
-| **macOS Universal** | `Vigilance_2.0.1_universal.dmg` |  |
-| **Apple Silicon Native** | `Vigilance_2.0.1_aarch64.dmg` |  |
+| Platform / Architecture | Filename |
+|-------------------------|----------|
+| **macOS Universal** | `Vigilance_2.0.1_universal.dmg` |
+| **Apple Silicon Native** | `Vigilance_2.0.1_aarch64.dmg` |
 | **Intel Native** | `Vigilance_2.0.1_x64.dmg` |  |
-| **macOS Portable (Zip)** | `Vigilance-Portable-mac-v2.0.1.zip` |  |
+| **macOS Portable (Zip)** | `Vigilance-Portable-mac-v2.0.1.zip` |
 
 ## Windows Distributions
-| Method | Filename | SHA-256 Checksum |
-|--------|----------|------------------|
-| **Windows Installer** | `Vigilance_2.0.1_x64_en-US.msi` |  |
-| **Windows Installer** | `Vigilance_2.0.1_x64-setup.exe` |  |
-| **Portable (Zip)** | `Vigilance-Portable-v2.0.1.zip` |  |
+| Method | Filename |
+|--------|----------|
+| **Windows Installer** | `Vigilance_2.0.1_x64_en-US.msi` |
+| **Windows Installer** | `Vigilance_2.0.1_x64-setup.exe` |
+| **Portable (Zip)** | `Vigilance-Portable-v2.0.1.zip` |
 
 
 **macOS Note**: 
