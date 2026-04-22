@@ -62,10 +62,10 @@ To verify your download, run shasum -a 256 [filename] (macOS) or Get-FileHash [f
 
 | Platform / Architecture | Filename | SHA-256 Checksum |
 |-------------------------|----------|------------------|
-| **macOS Universal** | `Vigilance_2.1.1_universal.dmg` |  |
-| **Apple Silicon Native** | `Vigilance_2.1.1_aarch64.dmg` |  |
-| **Intel Native** | `Vigilance_2.1.1_x64.dmg` |  |
-| **macOS Portable (Zip)** | `Vigilance-Portable-mac-v2.1.1.zip` |  |
+| **macOS Universal** | `Vigilance_2.1.1_universal.dmg` | sha256:6ee6ee876c955a4f6be6393a024ffa64d491a1e4c74d87d926f74e2bb4e1a120 |
+| **Apple Silicon Native** | `Vigilance_2.1.1_aarch64.dmg` | sha256:367613428134304198f3ece29f4cc5382ca917b67ccef99c1f093d7e41392f42 |
+| **Intel Native** | `Vigilance_2.1.1_x64.dmg` | sha256:27b1a4edeefbb810ffceb4b44dcd8e7421cc94430b0c38213eedb3def5d67fa9 |
+| **macOS Portable (Zip)** | `Vigilance-Portable-mac-v2.1.1.zip` | sha256:6ee6ee876c955a4f6be6393a024ffa64d491a1e4c74d87d926f74e2bb4e1a120 |
 
 ## Windows Distributions
 | Method | Filename | SHA-256 Checksum |
