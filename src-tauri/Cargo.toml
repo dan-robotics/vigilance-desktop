@@ -1,6 +1,6 @@
 [package]
 name = "vigilance"
-version = "2.0.1"
+version = "2.1.0"
 description = "Vigilance Network Security Shield"
 authors = ["Daniel Andries"]
 edition = "2021"

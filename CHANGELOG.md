@@ -1,5 +1,21 @@
 ## 📜 Changelog
 
+### 🚀 v2.1.0 — The AI Clarity Update (Stable)
+
+#### AI — Per-Detection Analysis
+- **"Ask AI" button on every detection card**: Both the Guardian (Heuristic Event Log) and Notifications tabs now have a dedicated **Ask AI** button on each detection card, placed next to the Block IP button. Clicking it sends that specific detection's IP, port, protocol, reason, score, and location to Gemini and writes the response directly into that card's AI note. Shows "Asking…" with a disabled state while in progress.
+- **Global "Ask AI" tab button in header**: A purple **Ask AI** button in the top header bar analyzes the full context of whichever tab is active — all current connections (Live), all detections (Guardian / Notifications), or all blocked IPs (Firewall). Result appears as a dismissible banner below the header.
+- **Local engine fallback**: Both the per-card and tab-level buttons fall back to the local `localExplain` engine if Cloud AI is disabled, so they always produce output.
+
+#### GeoIP — Instant Push Channel
+- **Dedicated `geo-resolved` Tauri event**: The backend now emits a `geo-resolved` event immediately when an IP resolves — independent of whether another packet from that IP arrives. Previously, geo info was only bundled into the next network packet from that IP; if traffic from a connection stopped before geo resolved, the frontend never received the location and it stayed blank permanently.
+- **Frontend listener backfills all tabs**: The frontend listens for `geo-resolved` and immediately updates all matching connections in the Live table and all matching detection cards in Guardian and Notifications — country, city, ASN, org, and local AI note all update at once.
+
+#### Version
+- **v2.1.0 Stable** unified across `package.json`, `Cargo.toml`, `tauri.conf.json`, About dialog, and `README.txt`.
+
+---
+
 ### 🚀 v2.0.1 — The Network Clarity Update
 
 #### IPv6 Support (Critical)

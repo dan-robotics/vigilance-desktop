@@ -211,6 +211,9 @@ export default function App() {
   const isPausedRef = useRef(isPaused);
   const [expandedProcesses, setExpandedProcesses] = useState<Set<string>>(new Set());
   const [processTotals, setProcessTotals] = useState<Record<string, {downBytes: number, upBytes: number}>>({});
+  const [aiTabAnalysis, setAiTabAnalysis] = useState<string | null>(null);
+  const [aiTabAnalyzing, setAiTabAnalyzing] = useState(false);
+  const [analyzingDetections, setAnalyzingDetections] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     isPausedRef.current = isPaused;
@@ -469,6 +472,89 @@ export default function App() {
     }
   };
 
+  const analyzeCurrentTab = async () => {
+    if (aiTabAnalyzing) return;
+    setAiTabAnalyzing(true);
+    setAiTabAnalysis(null);
+
+    try {
+      let prompt = '';
+
+      if (activeTab === 'live') {
+        const items = connections.slice(0, 25);
+        if (items.length === 0) { setAiTabAnalysis('No active connections to analyze.'); setAiTabAnalyzing(false); return; }
+        const summary = items.map(c =>
+          `${c.process} → ${c.remoteAddr}:${c.remotePort} (${c.protocol}) [${c.status}]${c.location ? ` · ${c.location}` : ''}`
+        ).join('\n');
+        prompt = `You are a network security analyst. Analyze these ${items.length} active network connections and give a concise 2–3 sentence security assessment — flag anything unusual:\n${summary}`;
+      } else if (activeTab === 'notifications' || activeTab === 'guardian') {
+        if (detections.length === 0) { setAiTabAnalysis('No detections to analyze.'); setAiTabAnalyzing(false); return; }
+        const items = detections.slice(0, 15);
+        const summary = items.map(d =>
+          `IP ${d.ip}:${d.port} (${d.protocol}) — ${d.reason} [score:${d.score}]${d.location ? ` · ${d.location}` : ''}`
+        ).join('\n');
+        prompt = `You are a network security analyst. Analyze these ${items.length} heuristic detections and provide a concise 2–3 sentence threat assessment. Identify any patterns or the most urgent risk:\n${summary}`;
+      } else if (activeTab === 'firewall') {
+        if (firewallRules.length === 0) { setAiTabAnalysis('No firewall rules to analyze.'); setAiTabAnalyzing(false); return; }
+        prompt = `You are a network security analyst. These IPs are currently blocked in the firewall: ${firewallRules.join(', ')}. In 2–3 sentences, identify if any are well-known malicious ranges and assess the overall blocking policy.`;
+      }
+
+      if (!prompt) { setAiTabAnalyzing(false); return; }
+
+      if (!useCloudAi) {
+        setAiTabAnalysis('Enable Cloud AI in Settings to use tab analysis.');
+        setAiTabAnalyzing(false);
+        return;
+      }
+
+      const ai = await getAiClient();
+      setAiRequestCount(prev => prev + 1);
+      setAiQuotaError(null);
+      const response = await ai.models.generateContent({ model: 'gemini-2.0-flash', contents: prompt });
+      setAiTabAnalysis(response.text || 'Analysis complete.');
+    } catch (err) {
+      const msg = String(err);
+      if (msg.includes('429') || msg.toLowerCase().includes('quota') || msg.toLowerCase().includes('rate limit')) {
+        setAiQuotaError('Gemini quota exceeded — AI analysis unavailable until quota resets.');
+        setAiTabAnalysis(null);
+      } else {
+        setAiTabAnalysis(`AI error: ${msg}`);
+      }
+    } finally {
+      setAiTabAnalyzing(false);
+    }
+  };
+
+  const analyzeDetection = async (det: { id: string; ip: string; port: number; protocol: string; reason: string; score: number; location: string }) => {
+    if (analyzingDetections.has(det.id)) return;
+    setAnalyzingDetections(prev => new Set(prev).add(det.id));
+    try {
+      let note: string;
+      if (useCloudAi) {
+        const ai = await getAiClient();
+        setAiRequestCount(prev => prev + 1);
+        setAiQuotaError(null);
+        const response = await ai.models.generateContent({
+          model: 'gemini-2.0-flash',
+          contents: `Analyze this network security detection in 1–2 sentences. IP: ${det.ip}:${det.port} (${det.protocol}). Reason: ${det.reason} (risk score: ${det.score}).${det.location ? ` Location: ${det.location}.` : ''} Identify what this IP likely belongs to and whether it is a real threat.`
+        });
+        note = response.text || 'Analysis complete.';
+      } else {
+        note = localExplain(det.ip, det.port, det.protocol, det.location, det.reason);
+      }
+      setDetections(prev => prev.map(d => d.id === det.id ? { ...d, aiNote: note } : d));
+    } catch (err) {
+      const msg = String(err);
+      if (msg.includes('429') || msg.toLowerCase().includes('quota') || msg.toLowerCase().includes('rate limit')) {
+        setAiQuotaError('Gemini quota exceeded — AI analysis unavailable until quota resets.');
+      } else {
+        setDetections(prev => prev.map(d => d.id === det.id ? { ...d, aiNote: `AI error: ${msg}` } : d));
+      }
+    } finally {
+      setAnalyzingDetections(prev => { const s = new Set(prev); s.delete(det.id); return s; });
+    }
+  };
+
   const analyzeThreat = async (conn: Connection) => {
     if (aiAnalysis[conn.id]) return;
     
@@ -530,6 +616,19 @@ export default function App() {
           
           await listen<string>('capture-error', (event) => {
             setCaptureError(event.payload);
+          });
+
+          await listen<{ ip: string; geo: GeoInfo }>('geo-resolved', (event) => {
+            const { ip, geo } = event.payload;
+            geoCacheRef.current[ip] = geo;
+            const label = buildLocationLabel(geo);
+            setConnections(prev => prev.map(c =>
+              c.remoteAddr === ip ? { ...c, location: label, geoInfo: geo } : c
+            ));
+            setDetections(prev => prev.map(d => {
+              if (d.ip !== ip) return d;
+              return { ...d, location: label, geoInfo: geo, aiNote: localExplain(d.ip, d.port, d.protocol, label, d.reason) };
+            }));
           });
 
           unlisten = await listen<NetworkEvent>('network-event', (event) => {
@@ -709,7 +808,21 @@ export default function App() {
             />
           </div>
           <div className="flex items-center gap-2">
-            <button 
+            <button
+              onClick={analyzeCurrentTab}
+              disabled={aiTabAnalyzing}
+              title="Ask AI to analyze this tab"
+              className={cn(
+                "flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-bold uppercase tracking-widest transition-all",
+                aiTabAnalyzing
+                  ? "border-purple-500/30 text-purple-400 bg-purple-500/5 animate-pulse cursor-not-allowed"
+                  : "border-purple-500/30 text-purple-400 hover:bg-purple-500/10 hover:border-purple-500/50"
+              )}
+            >
+              <Zap className="w-3.5 h-3.5" />
+              {aiTabAnalyzing ? 'Analyzing…' : 'Ask AI'}
+            </button>
+            <button
               onClick={() => setActiveTab('notifications')}
               className={cn("p-2 rounded-lg transition-colors relative", activeTab === 'notifications' ? "text-emerald-500 bg-emerald-500/5" : "text-slate-400 hover:bg-white/5")}
             >
@@ -718,7 +831,7 @@ export default function App() {
                 <span className="absolute top-1 right-1 w-2 h-2 bg-red-500 rounded-full border-2 border-[#0a0a0c]" />
               )}
             </button>
-            <button 
+            <button
               onClick={() => setActiveTab('settings')}
               className={cn("p-2 rounded-lg transition-colors", activeTab === 'settings' ? "text-emerald-500 bg-emerald-500/5" : "text-slate-400 hover:bg-white/5")}
             >
@@ -765,6 +878,16 @@ export default function App() {
 
         {/* --- Main Dashboard --- */}
         <main className="flex-1 overflow-y-auto p-8 custom-scrollbar relative">
+          {aiTabAnalysis && (
+            <div className="mb-4 px-4 py-3 bg-purple-500/10 border border-purple-500/30 rounded-xl flex items-start gap-3">
+              <Zap className="w-4 h-4 text-purple-400 mt-0.5 shrink-0" />
+              <div className="flex-1 min-w-0">
+                <p className="text-xs font-semibold text-purple-400 uppercase tracking-widest mb-1">AI Analysis</p>
+                <p className="text-xs text-purple-300/80 leading-relaxed">{aiTabAnalysis}</p>
+              </div>
+              <button onClick={() => setAiTabAnalysis(null)} className="text-purple-400/50 hover:text-purple-400 text-xs shrink-0">✕</button>
+            </div>
+          )}
           {captureError && (
             <div className="mb-4 px-4 py-3 bg-red-500/10 border border-red-500/30 rounded-xl flex items-start gap-3">
               <AlertTriangle className="w-4 h-4 text-red-400 mt-0.5 shrink-0" />
@@ -1381,9 +1504,22 @@ export default function App() {
                               )}
                             </div>
                           </div>
-                          <div className="text-right shrink-0 ml-4">
+                          <div className="flex flex-col items-end gap-2 shrink-0 ml-4">
                              <p className="text-xs font-mono text-slate-400">{det.time}</p>
-                             <p className="text-[10px] text-slate-600 uppercase tracking-widest mt-1">Kernel Blocked</p>
+                             <button
+                               onClick={() => analyzeDetection(det)}
+                               disabled={analyzingDetections.has(det.id)}
+                               className={cn(
+                                 "px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-widest transition-all flex items-center gap-1",
+                                 analyzingDetections.has(det.id)
+                                   ? "bg-purple-500/5 text-purple-400/50 cursor-not-allowed"
+                                   : "bg-purple-500/10 hover:bg-purple-500/20 text-purple-400"
+                               )}
+                             >
+                               <Zap className="w-3 h-3" />
+                               {analyzingDetections.has(det.id) ? 'Asking…' : 'Ask AI'}
+                             </button>
+                             <p className="text-[10px] text-slate-600 uppercase tracking-widest">Kernel Blocked</p>
                           </div>
                        </div>
                      ))}
@@ -1645,8 +1781,21 @@ export default function App() {
                              <p className="text-[10px] text-slate-600 italic animate-pulse">AI analyzing connection...</p>
                            )}
                          </div>
-                         <div className="text-right shrink-0">
-                           <p className="text-[10px] font-mono text-slate-600 mb-2">{det.time}</p>
+                         <div className="flex flex-col items-end gap-2 shrink-0">
+                           <p className="text-[10px] font-mono text-slate-600">{det.time}</p>
+                           <button
+                             onClick={() => analyzeDetection(det)}
+                             disabled={analyzingDetections.has(det.id)}
+                             className={cn(
+                               "px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-widest transition-all flex items-center gap-1",
+                               analyzingDetections.has(det.id)
+                                 ? "bg-purple-500/5 text-purple-400/50 cursor-not-allowed"
+                                 : "bg-purple-500/10 hover:bg-purple-500/20 text-purple-400"
+                             )}
+                           >
+                             <Zap className="w-3 h-3" />
+                             {analyzingDetections.has(det.id) ? 'Asking…' : 'Ask AI'}
+                           </button>
                            <button
                              onClick={() => blockConnection(det.ip)}
                              className="px-3 py-1.5 bg-red-500/10 hover:bg-red-500/20 text-red-500 rounded-lg text-[10px] font-bold uppercase tracking-widest transition-all"

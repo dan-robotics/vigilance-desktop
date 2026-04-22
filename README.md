@@ -2,7 +2,7 @@
 
 https://github.com/user-attachments/assets/4f626fc0-d0f5-461b-8e2a-33757ab97c05
 
-**Current Release: v2.0.1 — The Network Clarity Update** — [Changelog](./CHANGELOG.md)
+**Current Release: v2.1.0 Stable — The AI Clarity Update** — [Changelog](./CHANGELOG.md)
 
 Vigilance-Desktop has officially moved from prototype to a **production-grade security engine**. It provides real-time visibility into network traffic, automated AI threat analysis, and kernel-level protocol transparency through a unified Desktop experience.
 
@@ -33,15 +33,17 @@ If you prefer not to touch BPF permissions:
 sudo /Applications/Vigilance.app/Contents/MacOS/vigilance
 ```
 
-## 💎 v2.0.1 Key Highlights
+## 💎 v2.1.0 Key Highlights
 
-**IPv6 Support (Critical)**: Full IPv6 packet capture — the sniffer now dispatches on Ethernet EtherType before parsing. Previously, IPv6 frames were silently misread, causing traffic from Apple CDN, Netflix, Cloudflare, and all QUIC/HTTP3 services to be invisible or wrongly counted as upload.
+**Per-Detection AI Analysis**: Each detection card in the Guardian and Notifications tabs now has its own **Ask AI** button. Click it to send that specific detection to Gemini and get a targeted 1–2 sentence assessment written directly into the card.
 
-**Direction Detection Fix**: BPF promiscuous mode now filters out unicast frames destined for other LAN devices. Only packets involving this machine's own IPs are counted — eliminating other devices' traffic from being measured as this machine's upload.
+**Global Tab AI Analysis**: A purple **Ask AI** button in the top header bar analyzes the full context of the current tab — all active connections, all detections, or all blocked IPs — and displays a summary banner.
 
-**GeoIP — Rebuilt**: IPv6 IPs now resolve correctly. Resolution is parallel (up to 8 simultaneous lookups via `tokio::spawn`), with automatic fallback to ip-api.com if ipinfo.io fails. The "Resolving…" ghost text that produced "located in Resolving..." in AI notes has been removed.
+**GeoIP Instant Push**: The backend now emits a dedicated `geo-resolved` event the moment an IP resolves, pushing country, city, ASN, and org to the frontend immediately — even if that connection has gone idle. Previously geo stayed blank if traffic stopped before resolution completed.
 
-**AI Notes — Fixed**: GeoIP is now 100% handled by the Rust backend. Detection cards regenerate `aiNote` immediately when backend GeoIP first arrives. Fixed Gemini model name: `gemini-2.0-flash`.
+**IPv6 Support**: Full IPv6 packet capture — the sniffer dispatches on Ethernet EtherType before parsing. Traffic from Apple CDN, Netflix, Cloudflare, and all QUIC/HTTP3 services is now fully visible.
+
+**Direction Detection**: BPF promiscuous mode filters out unicast frames for other LAN devices. Only this machine's traffic is counted.
 
 **Memory Safety**: `GEO_CACHE` capped at 2000 entries; `connection_history` capped at 5000 entries — both evict oldest entries when full.
 
@@ -54,19 +56,19 @@ To verify your download, run shasum -a 256 [filename] (macOS) or Get-FileHash [f
 
 **macOS Distributions**: 
 
-| Platform / Architecture | Filename |
-|-------------------------|----------|
-| **macOS Universal** | `Vigilance_2.0.1_universal.dmg` |
-| **Apple Silicon Native** | `Vigilance_2.0.1_aarch64.dmg` |
-| **Intel Native** | `Vigilance_2.0.1_x64.dmg` |  |
-| **macOS Portable (Zip)** | `Vigilance-Portable-mac-v2.0.1.zip` |
+| Platform / Architecture | Filename | SHA-256 Checksum |
+|-------------------------|----------|------------------|
+| **macOS Universal** | `Vigilance_2.1.0_universal.dmg` |  |
+| **Apple Silicon Native** | `Vigilance_2.1.0_aarch64.dmg` |  |
+| **Intel Native** | `Vigilance_2.1.0_x64.dmg` |  |
+| **macOS Portable (Zip)** | `Vigilance-Portable-mac-v2.1.0.zip` |  |
 
 ## Windows Distributions
-| Method | Filename |
-|--------|----------|
-| **Windows Installer** | `Vigilance_2.0.1_x64_en-US.msi` |
-| **Windows Installer** | `Vigilance_2.0.1_x64-setup.exe` |
-| **Portable (Zip)** | `Vigilance-Portable-v2.0.1.zip` |
+| Method | Filename | SHA-256 Checksum |
+|--------|----------|------------------|
+| **Windows Installer** | `Vigilance_2.1.0_x64_en-US.msi` |  |
+| **Windows Installer** | `Vigilance_2.1.0_x64-setup.exe` |  |
+| **Portable (Zip)** | `Vigilance-Portable-v2.1.0.zip` |  |
 
 
 **macOS Note**: 

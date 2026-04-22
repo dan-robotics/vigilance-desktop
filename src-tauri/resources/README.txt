@@ -1,28 +1,44 @@
 ================================================================================
-  VIGILANCE DESKTOP v2.0.1 - Network Monitoring & Security Shield
+  VIGILANCE DESKTOP v2.1.0 - Network Monitoring & Security Shield
 ================================================================================
 
 WHAT IS VIGILANCE?
 ------------------
 Vigilance is a professional-grade, local-first network monitoring and security
-suite for Windows. It provides real-time visibility into all network traffic on
-your machine, grouped by application, with threat detection and firewall control.
+suite for Windows and macOS. It provides real-time visibility into all network
+traffic on your machine, grouped by application, with threat detection,
+firewall control, and AI-powered security analysis.
 
 FEATURES
 --------
-  - Real-time packet capture with process-level attribution
+  - Real-time packet capture with process-level attribution (IPv4 + IPv6)
   - Live & Audit modes for threat hunting and forensic accounting
   - Guardian Heuristic Engine: beaconing detection, protocol mismatch analysis
   - AI Deep Trace via Gemini (optional, requires API key)
-  - One-click IP blocking via Windows Firewall (WFP)
+    - Per-detection "Ask AI" button on Guardian and Notifications tabs
+    - Global "Ask AI" tab analysis — summarizes all active connections or alerts
+  - Instant GeoIP push: country, city, ASN, and org appear as soon as resolved
+  - One-click IP blocking via Windows Firewall (WFP) / macOS pfctl
   - CSV export for traffic logs, alerts, and heuristic events
   - Portable mode: runs from any folder, no install required
 
 REQUIREMENTS
 ------------
-  - Windows 10 / 11 (x64)
-  - Npcap driver installed (free): https://npcap.com
-  - Administrator privileges (required for packet capture and firewall rules)
+  - Windows 10 / 11 (x64) OR macOS 12+ (Universal / Apple Silicon / Intel)
+  - Npcap driver installed on Windows (free): https://npcap.com
+  - Administrator / BPF privileges required for packet capture and firewall rules
+
+MACOS SETUP (FIRST TIME)
+--------------------------
+  Raw packet capture requires BPF device access. Run once in Terminal:
+
+    sudo dseditgroup -o create access_bpf
+    sudo dseditgroup -o edit -a $(whoami) -t user access_bpf
+
+  Log out and back in — Vigilance then runs without sudo.
+
+  To allow passwordless firewall blocking via pfctl, add to /etc/sudoers:
+    your_username ALL=(ALL) NOPASSWD: /sbin/pfctl
 
 AI DEEP TRACE SETUP (OPTIONAL)
 --------------------------------
@@ -30,6 +46,8 @@ AI DEEP TRACE SETUP (OPTIONAL)
   2. Edit config.json in the app resources folder and add your key:
        { "GEMINI_API_KEY": "your-key-here" }
   3. Restart Vigilance — the AI toggle will activate in Settings
+  4. Use the "Ask AI" button in the header to analyze any tab,
+     or click "Ask AI" on individual detection cards in Guardian / Notifications.
 
 SUPPORT & DOCUMENTATION
 ------------------------

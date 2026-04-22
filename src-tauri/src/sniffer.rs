@@ -205,6 +205,7 @@ async fn resolve_geo_ip(client: &reqwest::Client, ip: &str) -> Option<GeoInfo> {
 
 pub fn start_active_probe(app: AppHandle) {
     // GeoIP Resolution Thread — concurrent lookups, IPv4 + IPv6, dual provider
+    let geo_app = app.clone();
     std::thread::spawn(move || {
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
@@ -239,12 +240,18 @@ pub fn start_active_probe(app: AppHandle) {
                     for handle in handles {
                         if let Ok((ip, geo)) = handle.await {
                             if let Some(info) = geo {
-                                let mut cache = GEO_CACHE.lock().unwrap();
-                                if cache.len() >= 2000 {
-                                    let keys: Vec<_> = cache.keys().take(500).cloned().collect();
-                                    for k in keys { cache.remove(&k); }
+                                {
+                                    let mut cache = GEO_CACHE.lock().unwrap();
+                                    if cache.len() >= 2000 {
+                                        let keys: Vec<_> = cache.keys().take(500).cloned().collect();
+                                        for k in keys { cache.remove(&k); }
+                                    }
+                                    cache.insert(ip.clone(), info.clone());
                                 }
-                                cache.insert(ip.clone(), info);
+                                let _ = geo_app.emit("geo-resolved", serde_json::json!({
+                                    "ip": ip,
+                                    "geo": info
+                                }));
                             }
                             GEO_IN_FLIGHT.lock().unwrap().remove(&ip);
                         }
