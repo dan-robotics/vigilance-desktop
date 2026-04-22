@@ -11,6 +11,9 @@
 - **Dedicated `geo-resolved` Tauri event**: The backend now emits a `geo-resolved` event immediately when an IP resolves — independent of whether another packet from that IP arrives. Previously, geo info was only bundled into the next network packet from that IP; if traffic from a connection stopped before geo resolved, the frontend never received the location and it stayed blank permanently.
 - **Frontend listener backfills all tabs**: The frontend listens for `geo-resolved` and immediately updates all matching connections in the Live table and all matching detection cards in Guardian and Notifications — country, city, ASN, org, and local AI note all update at once.
 
+#### Windows — Adapter Auto-Selection Fix
+- **Physical WiFi/LAN now selected by default on Windows**: The app was defaulting to the Hyper-V virtual adapter instead of the physical network card. Fixed both the backend candidate filter (virtual adapters with priority 0 are now fully excluded from auto-selection) and the frontend default picker (now searches for physical WiFi first, then physical Ethernet, explicitly skipping virtual adapters from Hyper-V, VMware, VirtualBox, and common VPN clients like Cisco, Juniper, and FortiClient).
+
 #### Version
 - **v2.1.0 Stable** unified across `package.json`, `Cargo.toml`, `tauri.conf.json`, About dialog, and `README.txt`.
 

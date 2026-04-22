@@ -47,6 +47,8 @@ sudo /Applications/Vigilance.app/Contents/MacOS/vigilance
 
 **Memory Safety**: `GEO_CACHE` capped at 2000 entries; `connection_history` capped at 5000 entries — both evict oldest entries when full.
 
+**Windows Adapter Fix**: Physical WiFi or LAN is now selected by default on Windows. Previously the app could default to a Hyper-V virtual adapter. Physical adapters are now always preferred over virtual ones (Hyper-V, VMware, VirtualBox, VPN clients).
+
 🛡️ Setup & Troubleshooting
 For hardware setup (Npcap), compiler linker fixes, and driver permissions:
 👉 DOCS/TROUBLESHOOTING.md

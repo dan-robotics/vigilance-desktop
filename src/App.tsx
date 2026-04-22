@@ -418,14 +418,23 @@ export default function App() {
           const ifaces = await invoke<InterfaceInfo[]>('get_interfaces');
           setAvailableInterfaces(ifaces);
           if (ifaces.length > 0) {
-            // Logic to find the best default interface (Wi-Fi or Ethernet usually preferred over Virtual)
-            const preferred = ifaces.find(i => 
-              i.description.toLowerCase().includes('wi-fi') || 
-              i.description.toLowerCase().includes('wlan') || 
-              i.description.toLowerCase().includes('ethernet') ||
-              i.name.toLowerCase().includes('wlan') ||
-              i.name.toLowerCase().includes('eth')
-            );
+            const virtualKeywords = ['virtual', 'hyper-v', 'vethernet', 'vmware', 'virtualbox',
+              'bluetooth', 'miniport', 'wan ', 'pseudo', 'tunnel', 'loopback', 'isatap',
+              'teredo', '6to4', 'npcap', 'cisco', 'juniper', 'fortinet', 'vpn'];
+            const isVirtual = (d: string) => virtualKeywords.some(k => d.toLowerCase().includes(k));
+
+            // Priority: physical WiFi → physical Ethernet → first non-virtual
+            const preferred =
+              ifaces.find(i => {
+                const d = i.description.toLowerCase();
+                return !isVirtual(d) && (d.includes('wi-fi') || d.includes('wifi') || d.includes('wlan') || d.includes('wireless') || d.includes('802.11'));
+              }) ||
+              ifaces.find(i => {
+                const d = i.description.toLowerCase();
+                return !isVirtual(d) && d.includes('ethernet');
+              }) ||
+              ifaces.find(i => !isVirtual(i.description));
+
             setSelectedInterface(preferred ? preferred.name : ifaces[0].name);
           }
         } catch (err) {

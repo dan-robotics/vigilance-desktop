@@ -367,6 +367,9 @@ pub fn start_active_probe(app: AppHandle) {
                     || combined.contains("miniport") || combined.contains("wan ")
                     || combined.contains("isatap") || combined.contains("teredo")
                     || combined.contains("6to4") || combined.contains("npcap loopback")
+                    || combined.contains("vpn") || combined.contains("cisco")
+                    || combined.contains("juniper") || combined.contains("fortinet")
+                    || combined.contains("tap-") || combined.contains("tun0")
                     // macOS tunnel / virtual interface name prefixes
                     || name.starts_with("utun")   // VPN, iCloud Private Relay
                     || name.starts_with("awdl")   // Apple Wireless Direct Link
@@ -402,7 +405,8 @@ pub fn start_active_probe(app: AppHandle) {
                 all_ifaces.iter().find(|iface| iface.name == *name).cloned()
             } else {
                 let mut candidates: Vec<_> = all_ifaces.iter()
-                    .filter(|iface| iface.is_up() && !iface.is_loopback() && !iface.ips.is_empty())
+                    .filter(|iface| iface.is_up() && !iface.is_loopback() && !iface.ips.is_empty()
+                        && adapter_priority(iface) > 0)
                     .cloned()
                     .collect();
                 candidates.sort_by_key(|iface| Reverse(adapter_priority(iface)));
