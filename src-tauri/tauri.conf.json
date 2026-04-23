@@ -1,7 +1,7 @@
 {
   "productName": "Vigilance",
   "version": "3.1.0",
-  "identifier": "com.vigilance.app",
+  "identifier": "com.vigilance",
   "build": {
     "beforeDevCommand": "npm run dev",
     "beforeBuildCommand": "npm run build",

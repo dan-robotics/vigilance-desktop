@@ -848,7 +848,7 @@ pub fn start_active_probe(app: AppHandle) {
 
             // Port→PID resolution — platform specific
             #[cfg(target_os = "windows")]
-            let pid_output = Command::new("netstat")
+            let _pid_output = Command::new("netstat")
                 .args(["-ano", "-p", "tcp"])
                 .creation_flags(CREATE_NO_WINDOW)
                 .output();
