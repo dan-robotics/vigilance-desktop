@@ -60,17 +60,17 @@ To verify your download, run shasum -a 256 [filename] (macOS) or Get-FileHash [f
 
 | Platform / Architecture | Filename | SHA-256 Checksum |
 |-------------------------|----------|------------------|
-| **macOS Universal** | `Vigilance_3.0.1_universal.dmg` | pending |
-| **Apple Silicon Native** | `Vigilance_3.0.1_aarch64.dmg` | pending |
-| **Intel Native** | `Vigilance_3.0.1_x64.dmg` | pending |
-| **macOS Portable (Zip)** | `Vigilance-Portable-mac-v3.0.1.zip` | pending |
+| **macOS Universal** | `Vigilance_3.0.1_universal.dmg` | b454816ed4e179995cec344ccb52c05a49b20e7ea8d0e3730e319a20c45f4db4 |
+| **Apple Silicon Native** | `Vigilance_3.0.1_aarch64.dmg` | 85e11418ac0f738676fd46a1d67d8804c720dc76b8a0eb2de8a9a08ac5d3823a |
+| **Intel Native** | `Vigilance_3.0.1_x64.dmg` | 55191bdb7d5d2c3942d0355a00c48490275ab604cf709a8fd7947bca5cf622b6 |
+| **macOS Portable (Zip)** | `Vigilance-Portable-mac-v3.0.1.zip` | 76f6547a729e41e47203963fd53f730fc30ad0fd372a8909f0a1d46cf5ec21d3 |
 
 ## Windows Distributions
 | Method | Filename | SHA-256 Checksum |
 |--------|----------|------------------|
-| **Windows Installer** | `Vigilance_3.0.1_x64_en-US.msi` | pending |
-| **Windows Installer** | `Vigilance_3.0.1_x64-setup.exe` | pending |
-| **Portable (Zip)** | `Vigilance-Portable-v3.0.1.zip` | pending |
+| **Windows Installer** | `Vigilance_3.0.1_x64_en-US.msi` | 13088a0cbbcef0e1d56e244da9f5c5ee6b383631716dc66114a23e6b50e8c981 |
+| **Windows Installer** | `Vigilance_3.0.1_x64-setup.exe` | d0c5ab3149c98660b15c4d47f61b4f13a412f9d41de622c301812c3c827d1726 |
+| **Portable (Zip)** | `Vigilance-Portable-v3.0.1.zip` | 31b6ec36e9c0f7acb798f77fa54ad11289cfa3329eba8a834366ad17c4801e58 |
 
 
 **macOS Note**: 
