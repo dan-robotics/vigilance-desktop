@@ -58,17 +58,17 @@ To verify your download, run shasum -a 256 [filename] (macOS) or Get-FileHash [f
 
 | Platform / Architecture | Filename | SHA-256 Checksum |
 |-------------------------|----------|------------------|
-| **macOS Universal** | `Vigilance_3.0.1_universal.dmg` | b454816ed4e179995cec344ccb52c05a49b20e7ea8d0e3730e319a20c45f4db4 |
-| **Apple Silicon Native** | `Vigilance_3.0.1_aarch64.dmg` | 85e11418ac0f738676fd46a1d67d8804c720dc76b8a0eb2de8a9a08ac5d3823a |
-| **Intel Native** | `Vigilance_3.0.1_x64.dmg` | 55191bdb7d5d2c3942d0355a00c48490275ab604cf709a8fd7947bca5cf622b6 |
-| **macOS Portable (Zip)** | `Vigilance-Portable-mac-v3.0.1.zip` | 76f6547a729e41e47203963fd53f730fc30ad0fd372a8909f0a1d46cf5ec21d3 |
+| **macOS Universal** | `Vigilance_3.1.0_universal.dmg` | 0a6ccf06cf651a5fafc38ed0ae08ac21f305f6229892f65be9324abb2786853a |
+| **Apple Silicon Native** | `Vigilance_3.1.0_aarch64.dmg` | b526710152327cb01142524c086ec9d3fcb22cde575abd5e414819dd061dcb7b |
+| **Intel Native** | `Vigilance_3.1.0_x64.dmg` | 0908164ecfb4811f13ddda063314e8be6b68b4ba91afd2b67a0c670d62831c47 |
+| **macOS Portable (Zip)** | `Vigilance-3.1.0-Portable-Universal.zip` | ab6aaed486a64fcaa1e082607d667ae3163673b6b05f99c8394d493cc2c3763f |
 
 ## Windows Distributions
 | Method | Filename | SHA-256 Checksum |
 |--------|----------|------------------|
-| **Windows Installer** | `Vigilance_3.0.1_x64_en-US.msi` | 13088a0cbbcef0e1d56e244da9f5c5ee6b383631716dc66114a23e6b50e8c981 |
-| **Windows Installer** | `Vigilance_3.0.1_x64-setup.exe` | d0c5ab3149c98660b15c4d47f61b4f13a412f9d41de622c301812c3c827d1726 |
-| **Portable (Zip)** | `Vigilance-Portable-v3.0.1.zip` | 31b6ec36e9c0f7acb798f77fa54ad11289cfa3329eba8a834366ad17c4801e58 |
+| **Windows Installer** | `Vigilance_3.1.0_x64_en-US.msi` | a4ab316fa5ca4254017b4e2f96465cc77e930ba5e0e8d2f57a974b69b83e9125 |
+| **Windows Installer** | `Vigilance_3.1.0_x64-setup.exe` | 0908164ecfb4811f13ddda063314e8be6b68b4ba91afd2b67a0c670d62831c47 |
+| **Portable (Zip)** | `Vigilance-Portable-v3.1.0.zip` | d18573cb6226346fcc5376e4e6b55911af751e254d9c540fb324aaaa34be7253 |
 
 
 **macOS Note**: 
