@@ -1,3 +1,4 @@
+use dns_lookup;
 use pnet::datalink::{self, Channel::Ethernet};
 use pnet::packet::ethernet::{EthernetPacket, EtherTypes};
 use pnet::packet::ip::IpNextHeaderProtocols;
@@ -26,6 +27,8 @@ lazy_static::lazy_static! {
     static ref GEO_IN_FLIGHT: Mutex<HashSet<String>> = Mutex::new(HashSet::new());
     // IPs that couldn't be resolved this session — skip retrying until next launch
     static ref GEO_FAILED: Mutex<HashSet<String>> = Mutex::new(HashSet::new());
+    static ref HOSTNAME_CACHE: Mutex<HashMap<String, String>> = Mutex::new(HashMap::new());
+    static ref HOSTNAME_IN_FLIGHT: Mutex<HashSet<String>> = Mutex::new(HashSet::new());
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -46,6 +49,186 @@ const SUSPICIOUS_PORTS: &[u16] = &[
     6667, 4444, 31337, 1337,
 ];
 
+// ─── Local Network Intelligence ──────────────────────────────────────────────
+
+fn is_local_ip(ip: &str) -> bool {
+    if let Ok(v4) = ip.parse::<std::net::Ipv4Addr>() {
+        return v4.is_private() || v4.is_loopback() || v4.is_link_local()
+            || v4.is_broadcast() || v4.is_multicast();
+    }
+    if let Ok(_v6) = ip.parse::<std::net::Ipv6Addr>() {
+        // fe80::/10 link-local, fc00::/7 ULA, ::1 loopback, ff00::/8 multicast
+        return ip.starts_with("fe80") || ip.starts_with("fc") || ip.starts_with("fd")
+            || ip == "::1" || ip.starts_with("ff");
+    }
+    false
+}
+
+fn is_multicast_ip(ip: &str) -> bool {
+    if let Ok(v4) = ip.parse::<std::net::Ipv4Addr>() {
+        return v4.is_multicast();
+    }
+    if let Ok(_) = ip.parse::<std::net::Ipv6Addr>() {
+        return ip.starts_with("ff");
+    }
+    false
+}
+
+/// Returns a human-readable service label for well-known LAN server ports.
+fn local_port_service(port: u16) -> Option<&'static str> {
+    match port {
+        22   => Some("SSH"),
+        23   => Some("Telnet"),
+        25   => Some("SMTP"),
+        53   => Some("DNS"),
+        67 | 68 => Some("DHCP"),
+        80   => Some("HTTP"),
+        110  => Some("POP3"),
+        143  => Some("IMAP"),
+        161  => Some("SNMP"),
+        389  => Some("LDAP"),
+        443  => Some("HTTPS"),
+        445  => Some("SMB"),
+        3306 => Some("MySQL"),
+        5432 => Some("PostgreSQL"),
+        6379 => Some("Redis"),
+        8080 | 8443 | 8888 => Some("Web (alt)"),
+        9200 => Some("Elasticsearch"),
+        27017 => Some("MongoDB"),
+        _    => None,
+    }
+}
+
+/// Cheap MAC OUI lookup — covers the most common device vendors.
+fn lookup_oui(mac_bytes: &[u8]) -> &'static str {
+    if mac_bytes.len() < 3 { return "Unknown"; }
+    match (mac_bytes[0], mac_bytes[1], mac_bytes[2]) {
+        // Apple
+        (0x00, 0x17, 0xf2) | (0x00, 0x1b, 0x63) | (0x00, 0x1c, 0xb3)
+        | (0x00, 0x23, 0xdf) | (0x00, 0x25, 0x4b) | (0x00, 0x26, 0xb9)
+        | (0x28, 0xcf, 0xda) | (0x3c, 0x07, 0x71) | (0x3c, 0x15, 0xc2)
+        | (0xac, 0xde, 0x48) | (0xf0, 0xb4, 0x79) | (0x00, 0x3e, 0xe1)
+        | (0x58, 0xd9, 0xd5) | (0xa8, 0x96, 0x8a) | (0x10, 0x9a, 0xdd) => "Apple",
+        // Samsung
+        (0x00, 0x12, 0xfb) | (0x00, 0x15, 0x99) | (0x00, 0x1e, 0xe1)
+        | (0x08, 0xec, 0xa9) | (0x5c, 0x0a, 0x5b) | (0x8c, 0x77, 0x12)
+        | (0xa0, 0x10, 0x81) | (0xcc, 0x07, 0xab) => "Samsung",
+        // Intel (Wi-Fi adapters, common in laptops)
+        (0x00, 0x1b, 0x21) | (0x00, 0x21, 0x6a) | (0x5c, 0x51, 0x4f)
+        | (0x8c, 0x8d, 0x28) | (0xa4, 0xc3, 0xf0) | (0xe0, 0xd5, 0x5e) => "Intel",
+        // Raspberry Pi
+        (0xb8, 0x27, 0xeb) | (0xdc, 0xa6, 0x32) | (0xe4, 0x5f, 0x01) => "Raspberry Pi",
+        // TP-Link
+        (0x14, 0xcc, 0x20) | (0x50, 0xc7, 0xbf) | (0x64, 0x70, 0x02)
+        | (0x6c, 0x4b, 0x90) | (0xa0, 0xf3, 0xc1) | (0xec, 0x08, 0x6b) => "TP-Link",
+        // Netgear
+        (0x00, 0x09, 0x5b) | (0x00, 0x14, 0x6c) | (0x1c, 0x1b, 0x0d)
+        | (0x20, 0x4e, 0x7f) | (0x2c, 0xb0, 0x5d) | (0x30, 0x46, 0x9a) => "Netgear",
+        // ASUS
+        (0x00, 0x1a, 0x92) | (0x04, 0x92, 0x26) | (0x10, 0x7b, 0x44)
+        | (0x2c, 0xfd, 0xa1) | (0x50, 0x46, 0x5d) | (0xac, 0x9e, 0x17) => "ASUS",
+        // Ubiquiti
+        (0x00, 0x27, 0x22) | (0x04, 0x18, 0xd6) | (0x24, 0xa4, 0x3c)
+        | (0x44, 0xd9, 0xe7) | (0x68, 0x72, 0x51) | (0xdc, 0x9f, 0xdb) => "Ubiquiti",
+        // VMware (virtual)
+        (0x00, 0x50, 0x56) | (0x00, 0x0c, 0x29) | (0x00, 0x05, 0x69) => "VMware (Virtual)",
+        _ => "Unknown",
+    }
+}
+
+/// Infer OS from TTL and TCP window. TTL=128 is Windows-exclusive;
+/// TTL=255 is network equipment; anything else is ambiguous so we
+/// only return a label when we have a strong signal.
+fn infer_os(ttl: u8, tcp_window: u16) -> Option<&'static str> {
+    match ttl {
+        128 => Some("Windows"),
+        255 => Some("Network Equipment"),
+        64 | 63 => {
+            match tcp_window {
+                65535 => Some("macOS/iOS"),
+                14600 | 29200 | 43800 => Some("Linux"),
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
+
+/// Build a GeoInfo for a local-network IP, using what we know from
+/// the packet itself (MAC OUI, TTL, window, hostname, ports).
+fn classify_local_ip(
+    ip: &str,
+    mac: &str,
+    ttl: u8,
+    tcp_window: u16,
+    port: u16,
+) -> GeoInfo {
+    let manufacturer = if !mac.is_empty() {
+        let parts: Vec<u8> = mac.split(':')
+            .filter_map(|h| u8::from_str_radix(h, 16).ok())
+            .collect();
+        lookup_oui(&parts).to_string()
+    } else {
+        "Unknown".to_string()
+    };
+
+    let os_guess = infer_os(ttl, tcp_window)
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| "Unknown OS".to_string());
+
+    let service = local_port_service(port)
+        .map(|s| format!(" · {}", s))
+        .unwrap_or_default();
+
+    let hostname = HOSTNAME_CACHE.lock().unwrap().get(ip).cloned()
+        .unwrap_or_default();
+
+    let city = if hostname.is_empty() { ip.to_string() } else { hostname };
+    let region = os_guess;
+    let asn = manufacturer;
+    let org = format!("LAN Device{}", service);
+
+    GeoInfo {
+        city,
+        region,
+        country_code: "LAN".to_string(),
+        asn,
+        org,
+    }
+}
+
+fn hostname_cache_path() -> std::path::PathBuf {
+    #[cfg(target_os = "macos")]
+    {
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+        std::path::PathBuf::from(home).join(".vigilance_hostname_cache.json")
+    }
+    #[cfg(windows)]
+    {
+        let base = std::env::var("LOCALAPPDATA")
+            .unwrap_or_else(|_| std::env::temp_dir().to_string_lossy().into_owned());
+        let dir = std::path::PathBuf::from(base).join("Vigilance");
+        let _ = std::fs::create_dir_all(&dir);
+        dir.join("hostname_cache.json")
+    }
+    #[cfg(not(any(target_os = "macos", windows)))]
+    { std::env::temp_dir().join("vigilance_hostname_cache.json") }
+}
+
+fn load_hostname_disk_cache() {
+    if let Ok(data) = std::fs::read_to_string(hostname_cache_path()) {
+        if let Ok(map) = serde_json::from_str::<HashMap<String, String>>(&data) {
+            *HOSTNAME_CACHE.lock().unwrap() = map;
+        }
+    }
+}
+
+fn save_hostname_disk_cache() {
+    if let Ok(data) = serde_json::to_string(&*HOSTNAME_CACHE.lock().unwrap()) {
+        let _ = std::fs::write(hostname_cache_path(), data);
+    }
+}
+
 // Heuristic Scoring Model
 fn calculate_risk_score(
     ip: &str, 
@@ -62,11 +245,34 @@ fn calculate_risk_score(
         return ("Direct Broadcast (Normal)".to_string(), 0);
     }
 
-    // Multicast range (224.0.0.0/4) — includes mDNS (224.0.0.251), SSDP (239.255.255.250), etc.
-    if let Some(first) = ip.split('.').next().and_then(|s| s.parse::<u8>().ok()) {
-        if first >= 224 {
-            return ("Multicast (Normal)".to_string(), 0);
+    // Multicast — three tiers based on scope and protocol
+    if is_multicast_ip(ip) {
+        // Well-known benign discovery addresses
+        let benign_multicast = [
+            "224.0.0.1",   // All-hosts
+            "224.0.0.2",   // All-routers
+            "224.0.0.251", // mDNS
+            "224.0.0.252", // LLMNR
+            "239.255.255.250", // SSDP/UPnP
+            "ff02::1",     // IPv6 all-nodes
+            "ff02::2",     // IPv6 all-routers
+            "ff02::fb",    // IPv6 mDNS
+            "ff02::1:2",   // IPv6 DHCP
+            "ff02::1:3",   // IPv6 LLMNR
+        ];
+        if benign_multicast.contains(&ip) {
+            return ("Multicast: Discovery (Normal)".to_string(), 0);
         }
+        // Protocol-specific multicast — routing protocols that should only appear on routers
+        let routing_multicast = ["224.0.0.5", "224.0.0.6", "224.0.0.9", "224.0.0.10",
+            "224.0.0.13", "224.0.0.18", "224.0.0.19", "224.0.0.20",
+            "ff02::5", "ff02::6", "ff02::9"];
+        if routing_multicast.contains(&ip) {
+            // Routing protocol multicast on a desktop is unusual
+            return ("Multicast: Routing Protocol (Investigate if not a router)".to_string(), 20);
+        }
+        // All other multicast — flag lightly for visibility
+        return ("Multicast: Unknown Group".to_string(), 10);
     }
 
     let mut score = 0;
@@ -456,6 +662,47 @@ pub fn start_active_probe(app: AppHandle) {
         }
     });
 
+    // Hostname resolution thread — reverse DNS for LAN devices, persisted to disk
+    let hostname_app = app.clone();
+    std::thread::spawn(move || {
+        load_hostname_disk_cache();
+
+        loop {
+            let pending: Vec<String> = {
+                let in_flight = HOSTNAME_IN_FLIGHT.lock().unwrap();
+                let cache = HOSTNAME_CACHE.lock().unwrap();
+                in_flight.iter()
+                    .filter(|ip| !cache.contains_key(*ip))
+                    .take(8)
+                    .cloned()
+                    .collect()
+            };
+
+            let mut had_new = false;
+            for ip in pending {
+                let hostname = dns_lookup::lookup_addr(&ip.parse().unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST)))
+                    .unwrap_or_default();
+                let resolved = if hostname.is_empty() || hostname == ip {
+                    ip.clone()
+                } else {
+                    hostname.trim_end_matches('.').to_string()
+                };
+                HOSTNAME_CACHE.lock().unwrap().insert(ip.clone(), resolved.clone());
+                HOSTNAME_IN_FLIGHT.lock().unwrap().remove(&ip);
+                had_new = true;
+                let _ = hostname_app.emit("hostname-resolved", serde_json::json!({
+                    "ip": ip,
+                    "hostname": resolved
+                }));
+            }
+            if had_new {
+                save_hostname_disk_cache();
+            }
+
+            std::thread::sleep(Duration::from_secs(2));
+        }
+    });
+
     std::thread::spawn(move || {
         let mut connection_history: HashMap<String, (Instant, Duration)> = HashMap::new();
         let mut aggregated_stats: HashMap<String, NetworkEvent> = HashMap::new();
@@ -534,18 +781,28 @@ pub fn start_active_probe(app: AppHandle) {
                         // Without this, ALL streaming traffic from modern CDNs is invisible.
                         let ethertype = eth_packet.get_ethertype();
 
-                        // Returns (src, dst, protocol, remote_port, local_port)
-                        let layer3: Option<(String, String, String, u16, u16)> =
+                        // Grab source MAC before consuming eth_packet into layer3 parse
+                        let src_mac = {
+                            let m = eth_packet.get_source();
+                            format!("{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
+                                m.0, m.1, m.2, m.3, m.4, m.5)
+                        };
+
+                        // Returns (src, dst, protocol, remote_port, local_port, ttl, tcp_window)
+                        let layer3: Option<(String, String, String, u16, u16, u8, u16)> =
                             if ethertype == EtherTypes::Ipv4 {
                                 Ipv4Packet::new(eth_packet.payload()).map(|ipv4| {
                                     let src = ipv4.get_source().to_string();
                                     let dst = ipv4.get_destination().to_string();
                                     let is_in = local_ips.iter().any(|ip| ip == &dst);
+                                    let ttl = ipv4.get_ttl();
                                     let mut rport = 0u16;
                                     let mut lport = 0u16;
+                                    let mut tcp_window = 0u16;
                                     let proto = match ipv4.get_next_level_protocol() {
                                         IpNextHeaderProtocols::Tcp => {
                                             if let Some(tcp) = TcpPacket::new(ipv4.payload()) {
+                                                tcp_window = tcp.get_window();
                                                 if is_in { rport = tcp.get_source(); lport = tcp.get_destination(); }
                                                 else     { rport = tcp.get_destination(); lport = tcp.get_source(); }
                                             }
@@ -573,18 +830,21 @@ pub fn start_active_probe(app: AppHandle) {
                                             n   => format!("PROTO-{}", n),
                                         },
                                     };
-                                    (src, dst, proto, rport, lport)
+                                    (src, dst, proto, rport, lport, ttl, tcp_window)
                                 })
                             } else if ethertype == EtherTypes::Ipv6 {
                                 Ipv6Packet::new(eth_packet.payload()).map(|ipv6| {
                                     let src = ipv6.get_source().to_string();
                                     let dst = ipv6.get_destination().to_string();
                                     let is_in = local_ips.iter().any(|ip| ip == &dst);
+                                    let hop_limit = ipv6.get_hop_limit();
                                     let mut rport = 0u16;
                                     let mut lport = 0u16;
+                                    let mut tcp_window = 0u16;
                                     let proto = match ipv6.get_next_header() {
                                         IpNextHeaderProtocols::Tcp => {
                                             if let Some(tcp) = TcpPacket::new(ipv6.payload()) {
+                                                tcp_window = tcp.get_window();
                                                 if is_in { rport = tcp.get_source(); lport = tcp.get_destination(); }
                                                 else     { rport = tcp.get_destination(); lport = tcp.get_source(); }
                                             }
@@ -599,13 +859,13 @@ pub fn start_active_probe(app: AppHandle) {
                                         },
                                         p => format!("PROTO-{}", p.0),
                                     };
-                                    (src, dst, proto, rport, lport)
+                                    (src, dst, proto, rport, lport, hop_limit, tcp_window)
                                 })
                             } else {
                                 None // ARP and other non-IP frames — ignore
                             };
 
-                        if let Some((src_addr, dst_addr, protocol, remote_port, local_port)) = layer3 {
+                        if let Some((src_addr, dst_addr, protocol, remote_port, local_port, ttl, tcp_window)) = layer3 {
                             // Only count traffic that involves this machine (promiscuous filter)
                             let is_inbound  = local_ips.iter().any(|ip| ip == &dst_addr);
                             let is_outbound = local_ips.iter().any(|ip| ip == &src_addr);
@@ -613,16 +873,18 @@ pub fn start_active_probe(app: AppHandle) {
                                 continue;
                             }
 
-                            let (remote_addr, direction) = if is_inbound {
-                                (src_addr, "Inbound")
+                            let (remote_addr, direction, pkt_mac) = if is_inbound {
+                                (src_addr, "Inbound", src_mac.clone())
                             } else {
-                                (dst_addr, "Outbound")
+                                (dst_addr, "Outbound", String::new())
                             };
 
                             let flow_key = format!("{}:{}:{}:{}", remote_addr, remote_port, protocol, direction);
 
-                            // Check GeoIP cache; queue public IPs (IPv4 and IPv6) for resolution
-                            let geo_info = {
+                            // GeoIP: local IPs get instant classification; public IPs queued for resolution
+                            let geo_info: Option<GeoInfo> = if is_local_ip(&remote_addr) {
+                                Some(classify_local_ip(&remote_addr, &pkt_mac, ttl, tcp_window, remote_port))
+                            } else {
                                 let cache = GEO_CACHE.lock().unwrap();
                                 let resolved = cache.get(&remote_addr).cloned();
                                 if resolved.is_none() {
@@ -630,15 +892,25 @@ pub fn start_active_probe(app: AppHandle) {
                                         .map(|ip| !ip.is_private() && !ip.is_loopback() && !ip.is_link_local())
                                         .unwrap_or_else(|_| {
                                             remote_addr.parse::<std::net::Ipv6Addr>()
-                                                .map(|ip| !ip.is_loopback() && !ip.is_unspecified()
-                                                    && !remote_addr.starts_with("fe80"))
+                                                .map(|_| !remote_addr.starts_with("fe80")
+                                                    && remote_addr != "::1")
                                                 .unwrap_or(false)
                                         });
                                     if is_public && !GEO_FAILED.lock().unwrap().contains(&remote_addr) {
                                         GEO_IN_FLIGHT.lock().unwrap().insert(remote_addr.clone());
                                     }
+                                    // Queue for hostname resolution too
+                                    if is_public {
+                                        let mut in_flight = HOSTNAME_IN_FLIGHT.lock().unwrap();
+                                        let cached = HOSTNAME_CACHE.lock().unwrap();
+                                        if !cached.contains_key(&remote_addr) && !in_flight.contains(&remote_addr) {
+                                            in_flight.insert(remote_addr.clone());
+                                        }
+                                    }
+                                    resolved
+                                } else {
+                                    resolved
                                 }
-                                resolved
                             };
 
                             let entry = aggregated_stats.entry(flow_key.clone()).or_insert_with(|| {

@@ -4,7 +4,7 @@
 <img width="2106" height="1184" alt="vigilance-app-record" src="https://github.com/user-attachments/assets/4269212a-c45e-437e-ab24-890f78f226a7" />
 
 
-**Current Release: v2.1.1 Stable — The AI Clarity Update** — [Changelog](./CHANGELOG.md)
+**Current Release: v3.0.1 Stable — The Local Intelligence Update** — [Changelog](./CHANGELOG.md)
 
 Vigilance-Desktop has officially moved from prototype to a **production-grade security engine**. It provides real-time visibility into network traffic, automated AI threat analysis, and kernel-level protocol transparency through a unified Desktop experience.
 
@@ -35,21 +35,19 @@ If you prefer not to touch BPF permissions:
 sudo /Applications/Vigilance.app/Contents/MacOS/vigilance
 ```
 
-## 💎 v2.1.1 Key Highlights
+## 💎 v3.0.1 Key Highlights
 
-**Per-Detection AI Analysis**: Each detection card in the Guardian and Notifications tabs now has its own **Ask AI** button. Click it to send that specific detection to Gemini and get a targeted 1–2 sentence assessment written directly into the card.
+**Local Network Intelligence**: Every device on your LAN is now fully classified in real-time — no external API call needed. IP, MAC OUI (vendor), TTL, TCP window size, and open port are combined to identify the device type, OS, and service (DNS server, SSH server, MySQL, etc.). LAN connections display in blue with a Network icon, clearly separate from internet traffic.
 
-**Global Tab AI Analysis**: A purple **Ask AI** button in the top header bar analyzes the full context of the current tab — all active connections, all detections, or all blocked IPs — and displays a summary banner.
+**Smart Multicast Scoring**: Multicast traffic is now scored in three tiers. Standard discovery (mDNS 224.0.0.251, SSDP, LLMNR, IPv6 equivalents) scores 0 — no noise. Routing protocol multicast on a desktop (OSPF, PIM, VRRP) scores 20 and is flagged for investigation — these only appear on routers, so seeing them on a workstation is meaningful. Unknown multicast groups score 10 for visibility.
 
-**GeoIP Instant Push**: The backend now emits a dedicated `geo-resolved` event the moment an IP resolves, pushing country, city, ASN, and org to the frontend immediately — even if that connection has gone idle. Previously geo stayed blank if traffic stopped before resolution completed.
+**Reverse DNS (OS-native)**: A dedicated hostname resolution thread runs `getnameinfo` via the OS DNS resolver — no external API. LAN devices with registered hostnames (DHCP, mDNS) show their name instead of the raw IP. Public IPs with PTR records (AWS, Cloudflare CDN nodes, etc.) also resolve.
 
-**IPv6 Support**: Full IPv6 packet capture — the sniffer dispatches on Ethernet EtherType before parsing. Traffic from Apple CDN, Netflix, Cloudflare, and all QUIC/HTTP3 services is now fully visible.
+**MAC OUI Fingerprinting**: The source MAC address from each Ethernet frame is matched against a built-in OUI table covering Apple, Samsung, Intel, Raspberry Pi, TP-Link, Netgear, ASUS, Ubiquiti, and VMware virtual adapters.
 
-**Direction Detection**: BPF promiscuous mode filters out unicast frames for other LAN devices. Only this machine's traffic is counted.
+**OS Fingerprinting (TTL + TCP Window)**: TTL=128 uniquely identifies Windows. TTL=255 identifies network equipment. TCP window size (64240 = Windows 10/11, 65535 = macOS/iOS) breaks ties on 64-TTL devices. Works identically on Windows and macOS captures.
 
-**Memory Safety**: `GEO_CACHE` capped at 2000 entries; `connection_history` capped at 5000 entries — both evict oldest entries when full.
-
-**Windows Adapter Fix**: Physical WiFi or LAN is now selected by default on Windows. Previously the app could default to a Hyper-V virtual adapter. Physical adapters are now always preferred over virtual ones (Hyper-V, VMware, VirtualBox, VPN clients).
+**GeoIP Reliability**: 6-provider fallback chain (ipinfo.io → ipapi.co → ipwhois.app → api.ip.sb → geojs.io → ip-api.com) with rustls-tls for consistent cross-platform TLS. Persistent disk cache and session-level GEO_FAILED set prevent rate-limit spirals.
 
 🛡️ Setup & Troubleshooting
 For hardware setup (Npcap), compiler linker fixes, and driver permissions:
@@ -62,17 +60,17 @@ To verify your download, run shasum -a 256 [filename] (macOS) or Get-FileHash [f
 
 | Platform / Architecture | Filename | SHA-256 Checksum |
 |-------------------------|----------|------------------|
-| **macOS Universal** | `Vigilance_2.1.1_universal.dmg` | sha256:6ee6ee876c955a4f6be6393a024ffa64d491a1e4c74d87d926f74e2bb4e1a120 |
-| **Apple Silicon Native** | `Vigilance_2.1.1_aarch64.dmg` | sha256:367613428134304198f3ece29f4cc5382ca917b67ccef99c1f093d7e41392f42 |
-| **Intel Native** | `Vigilance_2.1.1_x64.dmg` | sha256:27b1a4edeefbb810ffceb4b44dcd8e7421cc94430b0c38213eedb3def5d67fa9 |
-| **macOS Portable (Zip)** | `Vigilance-Portable-mac-v2.1.1.zip` | sha256:6ee6ee876c955a4f6be6393a024ffa64d491a1e4c74d87d926f74e2bb4e1a120 |
+| **macOS Universal** | `Vigilance_3.0.1_universal.dmg` | pending |
+| **Apple Silicon Native** | `Vigilance_3.0.1_aarch64.dmg` | pending |
+| **Intel Native** | `Vigilance_3.0.1_x64.dmg` | pending |
+| **macOS Portable (Zip)** | `Vigilance-Portable-mac-v3.0.1.zip` | pending |
 
 ## Windows Distributions
 | Method | Filename | SHA-256 Checksum |
 |--------|----------|------------------|
-| **Windows Installer** | `Vigilance_2.1.1_x64_en-US.msi` | sha256:f22c3bd865194dfd0525a3b3c9aaeb96c793e985e0eeca9bd5e3f0a333dbc084 |
-| **Windows Installer** | `Vigilance_2.1.1_x64-setup.exe` | sha256:7ef31f3619de6fa52bdb31a1b39337406169db60e22873dca7ae25b2adf5c299 |
-| **Portable (Zip)** | `Vigilance-Portable-v2.1.1.zip` | sha256:3fd7fd34872eab055e0d3889e14825ca5bd2858543eb2387336933bd96ae3a77 |
+| **Windows Installer** | `Vigilance_3.0.1_x64_en-US.msi` | pending |
+| **Windows Installer** | `Vigilance_3.0.1_x64-setup.exe` | pending |
+| **Portable (Zip)** | `Vigilance-Portable-v3.0.1.zip` | pending |
 
 
 **macOS Note**: 

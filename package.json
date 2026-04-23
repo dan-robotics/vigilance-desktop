@@ -1,7 +1,7 @@
 {
   "name": "vigilance",
   "private": true,
-  "version": "2.1.1",
+  "version": "3.0.1",
   "type": "module",
   "scripts": {
     "dev": "vite --port=3000 --host=0.0.0.0",
@@ -17,7 +17,7 @@
     "@tauri-apps/api": "^2.10.1",
     "@tauri-apps/cli": "^2.10.1",
     "@vitejs/plugin-react": "^5.0.4",
-    "clsx": "^2.1.1",
+    "clsx": "^3.0.1",
     "dotenv": "^17.2.3",
     "express": "^4.21.2",
     "lucide-react": "^0.546.0",

@@ -1,5 +1,29 @@
 ## 📜 Changelog
 
+### 🚀 v3.0.1 — The Local Intelligence Update (Stable)
+
+#### Local Network Intelligence — Real-Time LAN Device Classification
+- **Zero-API LAN classification**: Local IP addresses (RFC 1918, link-local, IPv6 ULA) are now classified instantly from the packet itself — no external API call. Each LAN connection shows device type, OS guess, manufacturer, and any running service in the UI.
+- **MAC OUI fingerprinting**: Source MAC address from each Ethernet frame is matched against a built-in vendor table (Apple, Samsung, Intel, Raspberry Pi, TP-Link, Netgear, ASUS, Ubiquiti, VMware) to identify the device manufacturer.
+- **OS fingerprinting**: TTL=128 uniquely identifies Windows. TTL=255 identifies network equipment (routers, switches). TCP window size breaks ties for 64-TTL devices — 65535 = macOS/iOS, Linux variants show 14600/29200/43800. Works identically from Windows and macOS capture.
+- **LAN server detection**: Open port is matched against 20 well-known service ports (DNS :53, SSH :22, SMTP :25, MySQL :3306, PostgreSQL :5432, Redis :6379, MongoDB :27017, etc.) and displayed as a service label.
+- **Blue LAN badge**: LAN connections display in blue with a Network icon, clearly distinct from internet traffic. The location column shows `hostname · OS · Manufacturer · Service` instead of country/ASN.
+
+#### Reverse DNS — Hostname Resolution (OS-Native, No External API)
+- **`getnameinfo` via OS resolver**: A dedicated hostname thread resolves LAN device names using the operating system's own DNS resolver — the same path your browser uses. No Vigilance-specific API. Queries your router's DNS, Pi-hole, or local mDNS — whatever your network uses.
+- **Async, non-blocking**: Up to 8 hostnames resolve in parallel in a background thread. The frontend updates live when a name arrives via the new `hostname-resolved` Tauri event.
+- **LAN-focused**: Only local and public IPs are queued. Private IPs resolve to `.local` mDNS names or DHCP-registered hostnames. Public IPs with PTR records (AWS, Cloudflare, etc.) also resolve and update the connection label.
+
+#### Smart Multicast Scoring — Three-Tier Engine
+- **Tier 1 — Discovery (score 0)**: mDNS (224.0.0.251 / ff02::fb), SSDP/UPnP (239.255.255.250), LLMNR (224.0.0.252), all-hosts, all-routers, IPv6 equivalents. These are normal LAN discovery signals — no alert generated.
+- **Tier 2 — Routing protocols (score 20)**: OSPF, PIM, VRRP, RIP multicast groups. These only appear on network equipment. Seeing them on a desktop or laptop is flagged for investigation.
+- **Tier 3 — Unknown group (score 10)**: Any other multicast address. Visible in the feed for awareness without triggering a full detection.
+
+#### Version
+- **v3.0.1 Stable** unified across `package.json`, `Cargo.toml`, `tauri.conf.json`, `main.rs` About dialog, and `README.txt`.
+
+---
+
 ### 🔧 v2.1.1 — GeoIP Reliability Update
 
 #### GeoIP — 6-Provider Fallback Chain

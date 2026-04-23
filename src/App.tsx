@@ -1,15 +1,16 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { 
+import {
   Shield,
   Activity,
   Globe,
+  Network,
   Cpu,
-  Zap, 
-  ArrowUp, 
-  ArrowDown, 
-  Lock, 
-  Unlock, 
-  MoreVertical, 
+  Zap,
+  ArrowUp,
+  ArrowDown,
+  Lock,
+  Unlock,
+  MoreVertical,
   Search,
   Settings,
   Bell,
@@ -51,6 +52,11 @@ async function getAiClient(): Promise<GoogleGenAI> {
 
 // --- GeoIP helpers ---
 function buildLocationLabel(geo: { city?: string; region?: string; country_code?: string; asn?: string; org?: string }): string {
+  if (geo.country_code === 'LAN') {
+    // LAN device: "hostname · OS · Manufacturer · service"
+    const parts = [geo.city, geo.region, geo.asn, geo.org].filter(Boolean);
+    return parts.join(' · ');
+  }
   const parts = [geo.city, geo.region, geo.country_code].filter(Boolean).join(', ');
   const suffix = geo.asn ? ` — ${geo.asn} ${geo.org}` : geo.org ? ` — ${geo.org}` : '';
   return parts ? `${parts}${suffix}` : (geo.org || '');
@@ -637,6 +643,17 @@ export default function App() {
             setDetections(prev => prev.map(d => {
               if (d.ip !== ip) return d;
               return { ...d, location: label, geoInfo: geo, aiNote: localExplain(d.ip, d.port, d.protocol, label, d.reason) };
+            }));
+          });
+
+          await listen<{ ip: string; hostname: string }>('hostname-resolved', (event) => {
+            const { ip, hostname } = event.payload;
+            // Update LAN connections whose city field is still just the raw IP
+            setConnections(prev => prev.map(c => {
+              if (c.remoteAddr !== ip || c.geoInfo?.country_code !== 'LAN') return c;
+              const updated: GeoInfo = { ...c.geoInfo!, city: hostname };
+              const label = buildLocationLabel(updated);
+              return { ...c, location: label, geoInfo: updated };
             }));
           });
 
@@ -1313,9 +1330,15 @@ export default function App() {
                                     <div key={c.id} className="flex items-center gap-1.5 min-w-0">
                                       <span className="text-xs text-slate-500 font-mono truncate">{c.remoteAddr}</span>
                                       {shortGeo(c.location) && (
-                                        <span className="text-[9px] text-slate-600 flex items-center gap-0.5 shrink-0">
-                                          <Globe className="w-2.5 h-2.5" />{shortGeo(c.location)}
-                                        </span>
+                                        c.geoInfo?.country_code === 'LAN' ? (
+                                          <span className="text-[9px] text-blue-400 flex items-center gap-0.5 shrink-0">
+                                            <Network className="w-2.5 h-2.5" />LAN
+                                          </span>
+                                        ) : (
+                                          <span className="text-[9px] text-slate-600 flex items-center gap-0.5 shrink-0">
+                                            <Globe className="w-2.5 h-2.5" />{shortGeo(c.location)}
+                                          </span>
+                                        )
                                       )}
                                     </div>
                                   ))}
@@ -1378,14 +1401,25 @@ export default function App() {
                                   <div className="flex flex-col min-w-0">
                                     <span className="text-xs text-slate-300 font-mono truncate">{conn.remoteAddr}</span>
                                     {conn.geoInfo && (
-                                      <div className="flex flex-col gap-0.5">
-                                        <span className="text-[9px] text-slate-500 flex items-center gap-1 truncate" title={conn.location}>
-                                          <Globe className="w-2.5 h-2.5 shrink-0" /> {conn.geoInfo.country_code} — {conn.geoInfo.city}, {conn.geoInfo.region}
-                                        </span>
-                                        <span className="text-[9px] text-emerald-500/70 font-bold uppercase tracking-widest truncate">
-                                          {conn.geoInfo.asn} {conn.geoInfo.org}
-                                        </span>
-                                      </div>
+                                      conn.geoInfo.country_code === 'LAN' ? (
+                                        <div className="flex flex-col gap-0.5">
+                                          <span className="text-[9px] text-blue-400 flex items-center gap-1 truncate" title={conn.location}>
+                                            <Network className="w-2.5 h-2.5 shrink-0" /> {conn.geoInfo.city} · {conn.geoInfo.region}
+                                          </span>
+                                          <span className="text-[9px] text-blue-400/60 font-bold uppercase tracking-widest truncate">
+                                            {conn.geoInfo.asn} · {conn.geoInfo.org}
+                                          </span>
+                                        </div>
+                                      ) : (
+                                        <div className="flex flex-col gap-0.5">
+                                          <span className="text-[9px] text-slate-500 flex items-center gap-1 truncate" title={conn.location}>
+                                            <Globe className="w-2.5 h-2.5 shrink-0" /> {conn.geoInfo.country_code} — {conn.geoInfo.city}, {conn.geoInfo.region}
+                                          </span>
+                                          <span className="text-[9px] text-emerald-500/70 font-bold uppercase tracking-widest truncate">
+                                            {conn.geoInfo.asn} {conn.geoInfo.org}
+                                          </span>
+                                        </div>
+                                      )
                                     )}
                                     <span className={cn(
                                       "text-[9px] font-bold uppercase tracking-wider flex items-center gap-1 truncate",
@@ -1866,9 +1900,11 @@ const PROTOCOL_DESC: Record<string, string> = {
   SCTP:   'stream control transport',
 };
 
-// Returns just the country from a full location string like "Seoul, Gyeonggi-do, KR — AS4766 Korea Telecom"
+// Returns a short label for the group header geo badge
 function shortGeo(location: string): string {
   if (!location || location === 'resolving') return '';
+  // LAN entries use · separator and start with hostname/IP
+  if (location.includes('LAN') || location.includes('· LAN Device')) return 'LAN';
   const withoutOrg = location.split(' — ')[0].trim();
   const parts = withoutOrg.split(', ');
   return parts[parts.length - 1]?.trim() || '';

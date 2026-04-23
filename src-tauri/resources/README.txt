@@ -1,5 +1,5 @@
 ================================================================================
-  VIGILANCE DESKTOP v2.1.1 - Network Monitoring & Security Shield
+  VIGILANCE DESKTOP v3.0.1 - Network Monitoring & Security Shield
 ================================================================================
 
 WHAT IS VIGILANCE?
