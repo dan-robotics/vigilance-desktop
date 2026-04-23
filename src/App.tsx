@@ -210,6 +210,10 @@ export default function App() {
   const geoCacheRef = useRef<Record<string, GeoInfo>>({});
   const detectionCooldownRef = useRef<Set<string>>(new Set());
   const useCloudAiRef = useRef(useCloudAi);
+  // Stable first-seen order — prevents process groups and connections from jumping around
+  // as new packets arrive. Updated after each render; useMemo reads it on the next cycle.
+  const processOrderRef = useRef<string[]>([]);
+  const connectionOrderRef = useRef<string[]>([]);
   const [isFilterOpen, setIsFilterOpen] = useState(false);
   const [filterType, setFilterType] = useState<'all' | 'suspicious' | 'blocked' | 'safe'>('all');
   const [monitoringMode, setMonitoringMode] = useState<'audit' | 'active'>('active');
@@ -220,10 +224,27 @@ export default function App() {
   const [aiTabAnalysis, setAiTabAnalysis] = useState<string | null>(null);
   const [aiTabAnalyzing, setAiTabAnalyzing] = useState(false);
   const [analyzingDetections, setAnalyzingDetections] = useState<Set<string>>(new Set());
+  const [apiKeyInput, setApiKeyInput] = useState('');
+  const [apiKeySaving, setApiKeySaving] = useState(false);
+  const [apiKeySaved, setApiKeySaved] = useState(false);
+  const [aiNotification, setAiNotification] = useState<{ type: 'error' | 'warning'; title: string; message: string } | null>(null);
 
   useEffect(() => {
     isPausedRef.current = isPaused;
   }, [isPaused]);
+
+  // Keep stable first-seen order for processes and individual connections.
+  // Refs update after each render; the next useMemo cycle picks them up.
+  useEffect(() => {
+    connections.forEach(c => {
+      if (!processOrderRef.current.includes(c.process)) {
+        processOrderRef.current.push(c.process);
+      }
+      if (!connectionOrderRef.current.includes(c.id)) {
+        connectionOrderRef.current.push(c.id);
+      }
+    });
+  }, [connections]);
 
   useEffect(() => { useCloudAiRef.current = useCloudAi; }, [useCloudAi]);
 
@@ -307,6 +328,16 @@ export default function App() {
     });
 
     const list = Object.values(groups);
+
+    // Stable connection order within each group
+    list.forEach(group => {
+      group.connections.sort((a, b) => {
+        const ia = connectionOrderRef.current.indexOf(a.id);
+        const ib = connectionOrderRef.current.indexOf(b.id);
+        return (ia === -1 ? Infinity : ia) - (ib === -1 ? Infinity : ib);
+      });
+    });
+
     if (groupSortKey) {
       list.sort((a, b) => {
         let cmp = 0;
@@ -315,6 +346,13 @@ export default function App() {
         else if (groupSortKey === 'endpoints') cmp = a.connections.length - b.connections.length;
         else if (groupSortKey === 'dataRate') cmp = (a.totalDownload + a.totalUpload) - (b.totalDownload + b.totalUpload);
         return groupSortDir === 'asc' ? cmp : -cmp;
+      });
+    } else {
+      // No user sort — keep processes in first-seen order so nothing jumps
+      list.sort((a, b) => {
+        const ia = processOrderRef.current.indexOf(a.process);
+        const ib = processOrderRef.current.indexOf(b.process);
+        return (ia === -1 ? Infinity : ia) - (ib === -1 ? Infinity : ib);
       });
     }
     return list;
@@ -411,9 +449,10 @@ export default function App() {
   useEffect(() => {
     async function init() {
       if ((window as any).__TAURI_INTERNALS__) {
-        // Auto-disable cloud AI if the key is missing or unreadable
+        // Auto-disable cloud AI if the key is missing or unreadable; pre-fill input if found
         try {
-          await invoke<string>('get_api_key');
+          const key = await invoke<string>('get_api_key');
+          if (key) setApiKeyInput(key);
         } catch {
           setUseCloudAi(false);
         }
@@ -525,12 +564,16 @@ export default function App() {
       const ai = await getAiClient();
       setAiRequestCount(prev => prev + 1);
       setAiQuotaError(null);
-      const response = await ai.models.generateContent({ model: 'gemini-2.0-flash', contents: prompt });
+      const response = await ai.models.generateContent({ model: 'gemini-2.5-flash', contents: prompt });
       setAiTabAnalysis(response.text || 'Analysis complete.');
     } catch (err) {
       const msg = String(err);
-      if (msg.includes('429') || msg.toLowerCase().includes('quota') || msg.toLowerCase().includes('rate limit')) {
+      if (msg.toLowerCase().includes('gemini_api_key not found') || msg.toLowerCase().includes('api key not found') || msg.toLowerCase().includes('cannot read config')) {
+        setAiNotification({ type: 'warning', title: 'AI Key Not Configured', message: 'Add your Gemini API key in Settings → AI Guardian to enable cloud analysis.' });
+        setAiTabAnalysis(null);
+      } else if (msg.includes('429') || msg.toLowerCase().includes('quota') || msg.toLowerCase().includes('rate limit')) {
         setAiQuotaError('Gemini quota exceeded — AI analysis unavailable until quota resets.');
+        setAiNotification({ type: 'error', title: 'AI Quota Exceeded', message: 'Gemini free tier limit reached. Analysis paused until quota resets (usually 1 minute).' });
         setAiTabAnalysis(null);
       } else {
         setAiTabAnalysis(`AI error: ${msg}`);
@@ -550,7 +593,7 @@ export default function App() {
         setAiRequestCount(prev => prev + 1);
         setAiQuotaError(null);
         const response = await ai.models.generateContent({
-          model: 'gemini-2.0-flash',
+          model: 'gemini-2.5-flash',
           contents: `Analyze this network security detection in 1–2 sentences. IP: ${det.ip}:${det.port} (${det.protocol}). Reason: ${det.reason} (risk score: ${det.score}).${det.location ? ` Location: ${det.location}.` : ''} Identify what this IP likely belongs to and whether it is a real threat.`
         });
         note = response.text || 'Analysis complete.';
@@ -560,8 +603,11 @@ export default function App() {
       setDetections(prev => prev.map(d => d.id === det.id ? { ...d, aiNote: note } : d));
     } catch (err) {
       const msg = String(err);
-      if (msg.includes('429') || msg.toLowerCase().includes('quota') || msg.toLowerCase().includes('rate limit')) {
+      if (msg.toLowerCase().includes('gemini_api_key not found') || msg.toLowerCase().includes('api key not found') || msg.toLowerCase().includes('cannot read config')) {
+        setAiNotification({ type: 'warning', title: 'AI Key Not Configured', message: 'Add your Gemini API key in Settings → AI Guardian to enable cloud analysis.' });
+      } else if (msg.includes('429') || msg.toLowerCase().includes('quota') || msg.toLowerCase().includes('rate limit')) {
         setAiQuotaError('Gemini quota exceeded — AI analysis unavailable until quota resets.');
+        setAiNotification({ type: 'error', title: 'AI Quota Exceeded', message: 'Gemini free tier limit reached. Analysis paused until quota resets (usually 1 minute).' });
       } else {
         setDetections(prev => prev.map(d => d.id === det.id ? { ...d, aiNote: `AI error: ${msg}` } : d));
       }
@@ -583,7 +629,7 @@ export default function App() {
       setAiRequestCount((prev: number) => prev + 1);
       setAiQuotaError(null);
       const response = await ai.models.generateContent({
-        model: 'gemini-2.0-flash',
+        model: 'gemini-2.5-flash',
         contents: `Analyze this network connection and tell me if it looks like a threat or normal behavior: 
         Process: ${conn.process}, Remote IP: ${conn.remoteAddr}, Port: ${conn.remotePort}, Protocol: ${conn.protocol}. 
         Return a short 1-sentence assessment.`,
@@ -610,8 +656,11 @@ export default function App() {
       }
     } catch (err) {
       const msg = String(err);
-      if (msg.includes('429') || msg.toLowerCase().includes('quota') || msg.toLowerCase().includes('rate limit')) {
+      if (msg.toLowerCase().includes('gemini_api_key not found') || msg.toLowerCase().includes('api key not found') || msg.toLowerCase().includes('cannot read config')) {
+        setAiNotification({ type: 'warning', title: 'AI Key Not Configured', message: 'Add your Gemini API key in Settings → AI Guardian to enable cloud analysis.' });
+      } else if (msg.includes('429') || msg.toLowerCase().includes('quota') || msg.toLowerCase().includes('rate limit')) {
         setAiQuotaError('Gemini quota exceeded — AI analysis unavailable until quota resets.');
+        setAiNotification({ type: 'error', title: 'AI Quota Exceeded', message: 'Gemini free tier limit reached. Analysis paused until quota resets (usually 1 minute).' });
       } else {
         setAiQuotaError(`AI error: ${msg}`);
       }
@@ -772,7 +821,7 @@ export default function App() {
                 if (useCloudAiRef.current) {
                   getAiClient()
                     .then(ai => ai.models.generateContent({
-                      model: 'gemini-2.0-flash',
+                      model: 'gemini-2.5-flash',
                       contents: `Analyze this network activity: IP ${detIp}:${data.remote_port} (${data.protocol}), process "${data.process || 'unknown'}". Detection reason: ${data.threat_label}. Location: ${detLocation}. In 1-2 sentences, identify what this IP likely belongs to and whether this traffic is likely benign or worth investigating.`
                     }))
                     .then(response => {
@@ -834,20 +883,22 @@ export default function App() {
             />
           </div>
           <div className="flex items-center gap-2">
-            <button
-              onClick={analyzeCurrentTab}
-              disabled={aiTabAnalyzing}
-              title="Ask AI to analyze this tab"
-              className={cn(
-                "flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-bold uppercase tracking-widest transition-all",
-                aiTabAnalyzing
-                  ? "border-purple-500/30 text-purple-400 bg-purple-500/5 animate-pulse cursor-not-allowed"
-                  : "border-purple-500/30 text-purple-400 hover:bg-purple-500/10 hover:border-purple-500/50"
-              )}
-            >
-              <Zap className="w-3.5 h-3.5" />
-              {aiTabAnalyzing ? 'Analyzing…' : 'Ask AI'}
-            </button>
+            {useCloudAi && (
+              <button
+                onClick={analyzeCurrentTab}
+                disabled={aiTabAnalyzing}
+                title="Ask AI to analyze this tab"
+                className={cn(
+                  "flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-bold uppercase tracking-widest transition-all",
+                  aiTabAnalyzing
+                    ? "border-purple-500/30 text-purple-400 bg-purple-500/5 animate-pulse cursor-not-allowed"
+                    : "border-purple-500/30 text-purple-400 hover:bg-purple-500/10 hover:border-purple-500/50"
+                )}
+              >
+                <Zap className="w-3.5 h-3.5" />
+                {aiTabAnalyzing ? 'Analyzing…' : 'Ask AI'}
+              </button>
+            )}
             <button
               onClick={() => setActiveTab('notifications')}
               className={cn("p-2 rounded-lg transition-colors relative", activeTab === 'notifications' ? "text-emerald-500 bg-emerald-500/5" : "text-slate-400 hover:bg-white/5")}
@@ -922,6 +973,20 @@ export default function App() {
                 <p className="text-xs text-red-400/70 mt-0.5">{captureError}</p>
               </div>
               <button onClick={() => setCaptureError(null)} className="text-red-400/50 hover:text-red-400 text-xs shrink-0">✕</button>
+            </div>
+          )}
+          {aiNotification && (
+            <div className={`mb-4 px-4 py-3 border rounded-xl flex items-start gap-3 ${aiNotification.type === 'error' ? 'bg-red-500/10 border-red-500/30' : 'bg-amber-500/10 border-amber-500/30'}`}>
+              <AlertTriangle className={`w-4 h-4 mt-0.5 shrink-0 ${aiNotification.type === 'error' ? 'text-red-400' : 'text-amber-400'}`} />
+              <div className="flex-1 min-w-0">
+                <p className={`text-xs font-semibold ${aiNotification.type === 'error' ? 'text-red-400' : 'text-amber-400'}`}>{aiNotification.title}</p>
+                <p className={`text-xs mt-0.5 ${aiNotification.type === 'error' ? 'text-red-400/70' : 'text-amber-400/70'}`}>{aiNotification.message}</p>
+              </div>
+              <button
+                onClick={() => { setActiveTab('settings'); setAiNotification(null); }}
+                className={`text-xs px-2 py-1 rounded-lg border transition-colors shrink-0 ${aiNotification.type === 'error' ? 'border-red-500/30 text-red-400 hover:bg-red-500/10' : 'border-amber-500/30 text-amber-400 hover:bg-amber-500/10'}`}
+              >Settings</button>
+              <button onClick={() => setAiNotification(null)} className={`text-xs shrink-0 ${aiNotification.type === 'error' ? 'text-red-400/50 hover:text-red-400' : 'text-amber-400/50 hover:text-amber-400'}`}>✕</button>
             </div>
           )}
           <AnimatePresence mode="wait">
@@ -1602,7 +1667,7 @@ export default function App() {
                          </div>
                          <div>
                            <p className="text-sm font-semibold text-white">Advanced AI Guardian</p>
-                           <p className="text-xs text-slate-500">Cloud-based threat analysis via Gemini 3 Flash</p>
+                           <p className="text-xs text-slate-500">Cloud-based threat analysis via Gemini 2.5 Flash</p>
                            <p className="text-xs text-slate-600 mt-0.5">{aiRequestCount} request{aiRequestCount !== 1 ? 's' : ''} this session</p>
                          </div>
                        </div>
@@ -1630,6 +1695,59 @@ export default function App() {
                          <button onClick={() => setAiQuotaError(null)} className="ml-auto text-red-400/50 hover:text-red-400 text-xs">✕</button>
                        </div>
                      )}
+
+                     <div className="p-6 bg-white/[0.02] border border-white/5 rounded-2xl space-y-4">
+                       <div className="flex items-center gap-4">
+                         <div className="p-2 bg-amber-500/10 rounded-lg">
+                           <Zap className="w-5 h-5 text-amber-500" />
+                         </div>
+                         <div>
+                           <p className="text-sm font-semibold text-white">Gemini API Key</p>
+                           <p className="text-xs text-slate-500">
+                             Stored locally in config.json.{' '}
+                             <button
+                               onClick={() => invoke('open_url', { url: 'https://aistudio.google.com/apikey' })}
+                               className="text-amber-400 hover:text-amber-300 underline underline-offset-2 transition-colors"
+                             >Get a free API key →</button>
+                           </p>
+                           <p className="text-xs text-slate-600 mt-0.5">Free tier: ~1,500 requests/day. No credit card required.</p>
+                         </div>
+                       </div>
+                       <div className="flex gap-2">
+                         <input
+                           type="password"
+                           value={apiKeyInput}
+                           onChange={e => setApiKeyInput(e.target.value)}
+                           placeholder="AIza…"
+                           className="flex-1 bg-black/40 border border-white/10 rounded-xl px-4 py-2 text-sm text-slate-300 placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-amber-500/20 font-mono"
+                         />
+                         <button
+                           disabled={apiKeySaving || !apiKeyInput.trim()}
+                           onClick={async () => {
+                             setApiKeySaving(true);
+                             try {
+                               await invoke('set_api_key', { key: apiKeyInput.trim() });
+                               aiClient = null; // force re-init with new key
+                               setApiKeySaved(true);
+                               setAiNotification(null);
+                               setAiQuotaError(null);
+                               setTimeout(() => setApiKeySaved(false), 2500);
+                             } catch (err) {
+                               setAiNotification({ type: 'error', title: 'Save Failed', message: String(err) });
+                             } finally {
+                               setApiKeySaving(false);
+                             }
+                           }}
+                           className={`px-4 py-2 rounded-xl text-xs font-semibold transition-all border ${
+                             apiKeySaved
+                               ? 'bg-emerald-500/20 border-emerald-500/30 text-emerald-400'
+                               : 'bg-amber-500/10 border-amber-500/20 text-amber-400 hover:bg-amber-500/20 disabled:opacity-40 disabled:cursor-not-allowed'
+                           }`}
+                         >
+                           {apiKeySaving ? 'Saving…' : apiKeySaved ? '✓ Saved' : 'Save'}
+                         </button>
+                       </div>
+                     </div>
 
                      <div className="p-6 bg-white/[0.02] border border-white/5 rounded-2xl flex items-center justify-between group hover:border-white/10 transition-colors">
                        <div className="flex items-center gap-4">

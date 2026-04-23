@@ -1,5 +1,43 @@
 ## 📜 Changelog
 
+### 🚀 v3.1.0 — The Guardian Clarity Update (Stable)
+
+#### AI — Cloud AI Setup & Notifications
+- **Gemini API key input in Settings**: A new "Gemini API Key" card in Settings lets you paste your key directly in the app — no need to open `config.json` manually. The field is pre-filled with the current key on startup. Saving applies immediately without a restart.
+- **"Get a free API key →" link**: Clicking the link opens Google AI Studio in your default browser. Free tier information shown inline (∼1,500 requests/day, no credit card required).
+- **Live notification banners**: When AI analysis fails due to a missing key or quota limit, an amber/red dismissible banner appears in the main panel with a direct "Settings" jump button — visible from any tab, not just the Settings page.
+- **Model updated**: All AI analysis now uses `gemini-2.5-flash` (replaced deprecated `gemini-2.0-flash`).
+- **Ask AI visibility**: The Ask AI header button is now hidden when Cloud AI is disabled in Settings — no more dead button.
+- **Settings label corrected**: "Gemini 3 Flash" → "Gemini 2.5 Flash".
+
+#### LAN Device Intelligence — Major Expansion
+- **OUI vendor table expanded**: 8 → 20+ vendors. Added Starlink/SpaceX, Google (Nest/Home/Chromecast), Amazon (Echo/Ring/Fire TV), Cisco/Linksys, D-Link, Arris/Commscope, Eero, Huawei, Xiaomi, Motorola, Synology, QNAP, Dell, HP, VirtualBox, Microsoft. All with multiple OUI prefixes per vendor.
+- **Randomized MAC detection**: iOS 14+, Android 10+, and Windows 10+ rotate MAC addresses per network for privacy. Bit-1 of the first MAC byte now detected and labeled **"Randomized MAC (Privacy Mode)"** instead of "Unknown".
+- **IPv6 EUI-64 MAC extraction**: Link-local addresses (`fe80::/10`) in EUI-64 format have the MAC embedded. The app now extracts it and runs a full OUI lookup — so IPv6-only LAN connections get vendor identification.
+- **Hardware-aware OS detection**: OS inference now receives the detected hardware manufacturer to block impossible combinations. Raspberry Pi (and other SBCs) can only run Linux — TCP window=65535 on Pi hardware now shows **"Linux"** instead of "macOS/iOS".
+- **Stable LAN device cache**: Device classification (OS, manufacturer, role) is computed once per IP and cached. TCP window fluctuations between packets no longer cause the OS label to flip between macOS and Linux on every packet.
+- **Gateway detection**: Last-octet `.1` and `.254` addresses are labeled **"Gateway / Router"** with the vendor appended when known (e.g., "Gateway / Router (Starlink)").
+- **LAN port table expanded**: Added mDNS/Bonjour (:5353), NetBIOS (:137/:138), SMB (:139/:445), AirPlay (:7000/:7100), HomeKit (:51827), Chromecast (:8008/:8009), SSDP/UPnP (:1900), LLMNR (:5355), WSD/Windows (:3702), RDP (:3389), IPP/Printing (:631), AFP/Mac Share (:548), Syslog (:514), JumpCloud/Syslog (:1514).
+- **Raspberry Pi OUI expanded**: 4 → 7 OUI blocks covering all Pi generations including Pi 4 and Pi 5.
+- **Hostname-aware Linux detection**: If the OUI table misses a device but reverse DNS resolves a hostname containing `raspberry`, `rpi`, `ubuntu`, `debian`, etc., OS inference treats it as Linux-only — prevents false "macOS" labels on unknown-OUI Linux machines.
+- **Hostname cache invalidates LAN cache**: When reverse DNS resolves for a LAN IP, the device classification cache is invalidated so the city field updates from raw IP to the resolved hostname on the next packet.
+
+#### Process Attribution — Root Daemon Identification
+- **Hostname-based process labeling**: When `lsof` can't identify a process (root daemons, macOS Application Firewall intercepts), the resolved hostname of the remote IP is used to label the connection. Covers JumpCloud Agent, Kandji MDM, Jamf MDM, Microsoft Intune, Apple Services, Microsoft 365, Okta, CrowdStrike, SentinelOne, Slack, Zoom, Teams, Dropbox, Firefox, AWS, Azure, Google Cloud, Cloudflare, Fastly, Akamai, and more.
+- **Retroactive process name update**: Process name is now updated on every subsequent packet for connections that started as "Guardian Kernel". As soon as a hostname resolves, the next packet flips the label — no restart needed.
+- **`sudo lsof` fallback on macOS**: A second `lsof` pass using `sudo -n` is attempted silently. If passwordless sudo is configured for `/usr/sbin/lsof`, root daemons (JumpCloud agent, MDM agents) become directly visible by PID.
+
+#### UI — Stable Connection List
+- **Process groups no longer jump around**: Added first-seen order tracking via `useRef`. Process groups and individual connections maintain their position as new packets arrive. Previously, a new sub-connection for an existing process (e.g., Google opening a second endpoint) would cause Google to jump to the top of the list.
+- **Stable sub-connection order**: Individual connections within a process group also maintain first-seen order.
+- **Column sorts still work**: Clicking any column header (Process, Endpoints, Data Rate) still sorts as expected and overrides the stable order.
+
+#### Copyright & Metadata
+- **Copyright corrected**: `tauri.conf.json` bundle copyright updated from "C 2026 Vigilance Security" → "© 2026 Daniel Andries".
+- **v3.1.0** unified across `package.json`, `Cargo.toml`, `tauri.conf.json`, About dialog, and `README.txt`.
+
+---
+
 ### 🚀 v3.0.1 — The Local Intelligence Update (Stable)
 
 #### Local Network Intelligence — Real-Time LAN Device Classification

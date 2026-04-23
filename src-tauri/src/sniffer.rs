@@ -29,6 +29,9 @@ lazy_static::lazy_static! {
     static ref GEO_FAILED: Mutex<HashSet<String>> = Mutex::new(HashSet::new());
     static ref HOSTNAME_CACHE: Mutex<HashMap<String, String>> = Mutex::new(HashMap::new());
     static ref HOSTNAME_IN_FLIGHT: Mutex<HashSet<String>> = Mutex::new(HashSet::new());
+    // Stable LAN device classification: classify once per IP, don't re-run on every packet.
+    // This prevents OS guess from flipping as TCP window size fluctuates.
+    static ref LAN_DEVICE_CACHE: Mutex<HashMap<String, GeoInfo>> = Mutex::new(HashMap::new());
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -84,95 +87,337 @@ fn local_port_service(port: u16) -> Option<&'static str> {
         67 | 68 => Some("DHCP"),
         80   => Some("HTTP"),
         110  => Some("POP3"),
+        137 | 138 => Some("NetBIOS"),
+        139  => Some("NetBIOS/SMB"),
         143  => Some("IMAP"),
         161  => Some("SNMP"),
         389  => Some("LDAP"),
         443  => Some("HTTPS"),
-        445  => Some("SMB"),
+        445  => Some("SMB/Windows Share"),
+        514  => Some("Syslog"),
+        548  => Some("AFP/Mac Share"),
+        1514 => Some("JumpCloud/Syslog"),
+        631  => Some("IPP/Printing"),
+        1900 => Some("SSDP/UPnP"),
         3306 => Some("MySQL"),
+        3389 => Some("RDP"),
+        3702 => Some("WSD/Windows"),
+        5353 => Some("mDNS/Bonjour"),
+        5355 => Some("LLMNR"),
         5432 => Some("PostgreSQL"),
         6379 => Some("Redis"),
+        7000 | 7100 => Some("AirPlay"),
+        8008 | 8009 => Some("Chromecast"),
         8080 | 8443 | 8888 => Some("Web (alt)"),
         9200 => Some("Elasticsearch"),
         27017 => Some("MongoDB"),
+        51827 => Some("HomeKit"),
         _    => None,
     }
 }
 
-/// Cheap MAC OUI lookup — covers the most common device vendors.
-fn lookup_oui(mac_bytes: &[u8]) -> &'static str {
-    if mac_bytes.len() < 3 { return "Unknown"; }
-    match (mac_bytes[0], mac_bytes[1], mac_bytes[2]) {
+/// Cheap MAC OUI lookup — covers common device vendors.
+/// Returns None for locally-administered (randomized) MACs so callers can label them separately.
+fn lookup_oui(mac_bytes: &[u8]) -> Option<&'static str> {
+    if mac_bytes.len() < 3 { return Some("Unknown"); }
+    // Bit 1 of first byte set = locally administered = randomized MAC (iOS 14+, Android 10+, Win10+)
+    if mac_bytes[0] & 0x02 != 0 {
+        return None; // signals "randomized"
+    }
+    let label = match (mac_bytes[0], mac_bytes[1], mac_bytes[2]) {
         // Apple
         (0x00, 0x17, 0xf2) | (0x00, 0x1b, 0x63) | (0x00, 0x1c, 0xb3)
         | (0x00, 0x23, 0xdf) | (0x00, 0x25, 0x4b) | (0x00, 0x26, 0xb9)
         | (0x28, 0xcf, 0xda) | (0x3c, 0x07, 0x71) | (0x3c, 0x15, 0xc2)
         | (0xac, 0xde, 0x48) | (0xf0, 0xb4, 0x79) | (0x00, 0x3e, 0xe1)
-        | (0x58, 0xd9, 0xd5) | (0xa8, 0x96, 0x8a) | (0x10, 0x9a, 0xdd) => "Apple",
+        | (0x58, 0xd9, 0xd5) | (0xa8, 0x96, 0x8a) | (0x10, 0x9a, 0xdd)
+        | (0x98, 0x01, 0xa7) | (0xa4, 0xc3, 0xf0) | (0x8c, 0x85, 0x90)
+        | (0x70, 0x73, 0xcb) | (0xd0, 0x81, 0x7a) | (0xf4, 0xf1, 0x5a)
+        | (0x34, 0xab, 0x37) | (0x14, 0x98, 0x77) | (0x60, 0x03, 0x08)
+        | (0xbc, 0x92, 0x6b) | (0x38, 0xca, 0xda) => "Apple",
         // Samsung
         (0x00, 0x12, 0xfb) | (0x00, 0x15, 0x99) | (0x00, 0x1e, 0xe1)
         | (0x08, 0xec, 0xa9) | (0x5c, 0x0a, 0x5b) | (0x8c, 0x77, 0x12)
-        | (0xa0, 0x10, 0x81) | (0xcc, 0x07, 0xab) => "Samsung",
-        // Intel (Wi-Fi adapters, common in laptops)
+        | (0xa0, 0x10, 0x81) | (0xcc, 0x07, 0xab) | (0x40, 0x4e, 0x36)
+        | (0x94, 0x35, 0xa6) | (0x78, 0x40, 0xe4) | (0x50, 0x01, 0xd9) => "Samsung",
+        // Intel (Wi-Fi adapters)
         (0x00, 0x1b, 0x21) | (0x00, 0x21, 0x6a) | (0x5c, 0x51, 0x4f)
-        | (0x8c, 0x8d, 0x28) | (0xa4, 0xc3, 0xf0) | (0xe0, 0xd5, 0x5e) => "Intel",
-        // Raspberry Pi
-        (0xb8, 0x27, 0xeb) | (0xdc, 0xa6, 0x32) | (0xe4, 0x5f, 0x01) => "Raspberry Pi",
+        | (0x8c, 0x8d, 0x28) | (0xe0, 0xd5, 0x5e) | (0xa4, 0x34, 0xd9)
+        | (0x8c, 0xec, 0x4b) | (0x10, 0x02, 0xb5) => "Intel",
+        // Raspberry Pi Foundation (multiple OUI blocks allocated over the years)
+        (0xb8, 0x27, 0xeb) | (0xdc, 0xa6, 0x32) | (0xe4, 0x5f, 0x01)
+        | (0xd8, 0x3a, 0xdd) | (0x28, 0xcd, 0xc1) | (0x2c, 0xcf, 0x67)
+        | (0x28, 0xcd, 0xc4) => "Raspberry Pi",
         // TP-Link
         (0x14, 0xcc, 0x20) | (0x50, 0xc7, 0xbf) | (0x64, 0x70, 0x02)
-        | (0x6c, 0x4b, 0x90) | (0xa0, 0xf3, 0xc1) | (0xec, 0x08, 0x6b) => "TP-Link",
+        | (0x6c, 0x4b, 0x90) | (0xa0, 0xf3, 0xc1) | (0xec, 0x08, 0x6b)
+        | (0x30, 0xde, 0x4b) | (0xc0, 0x25, 0xe9) | (0x18, 0xd6, 0xc7)
+        | (0x50, 0xd4, 0xf7) | (0x98, 0xda, 0xc4) => "TP-Link",
         // Netgear
         (0x00, 0x09, 0x5b) | (0x00, 0x14, 0x6c) | (0x1c, 0x1b, 0x0d)
-        | (0x20, 0x4e, 0x7f) | (0x2c, 0xb0, 0x5d) | (0x30, 0x46, 0x9a) => "Netgear",
+        | (0x20, 0x4e, 0x7f) | (0x2c, 0xb0, 0x5d) | (0x30, 0x46, 0x9a)
+        | (0xa0, 0x40, 0xa0) | (0xc0, 0x3f, 0x0e) | (0x9c, 0x3d, 0xcf) => "Netgear",
         // ASUS
         (0x00, 0x1a, 0x92) | (0x04, 0x92, 0x26) | (0x10, 0x7b, 0x44)
-        | (0x2c, 0xfd, 0xa1) | (0x50, 0x46, 0x5d) | (0xac, 0x9e, 0x17) => "ASUS",
+        | (0x2c, 0xfd, 0xa1) | (0x50, 0x46, 0x5d) | (0xac, 0x9e, 0x17)
+        | (0x74, 0xd0, 0x2b) | (0x08, 0x60, 0x6e) | (0x30, 0x5a, 0x3a) => "ASUS",
         // Ubiquiti
         (0x00, 0x27, 0x22) | (0x04, 0x18, 0xd6) | (0x24, 0xa4, 0x3c)
-        | (0x44, 0xd9, 0xe7) | (0x68, 0x72, 0x51) | (0xdc, 0x9f, 0xdb) => "Ubiquiti",
+        | (0x44, 0xd9, 0xe7) | (0x68, 0x72, 0x51) | (0xdc, 0x9f, 0xdb)
+        | (0x78, 0x8a, 0x20) | (0xf4, 0x92, 0xbf) => "Ubiquiti",
+        // Cisco / Linksys
+        (0x00, 0x00, 0x0c) | (0x00, 0x1a, 0x2f) | (0x00, 0x1b, 0x54)
+        | (0x00, 0x1c, 0x10) | (0x00, 0x26, 0xcb) | (0x58, 0x93, 0x96)
+        | (0x68, 0xef, 0xbd) | (0xc8, 0x9c, 0x1d) | (0x00, 0x17, 0x94)
+        | (0x18, 0x33, 0x9d) | (0x48, 0xf8, 0xb3) | (0x78, 0xba, 0xf9) => "Cisco/Linksys",
+        // D-Link
+        (0x00, 0x05, 0x5d) | (0x00, 0x0d, 0x88) | (0x00, 0x11, 0x95)
+        | (0x00, 0x17, 0x9a) | (0x1c, 0xaf, 0xf7) | (0x28, 0x10, 0x7b)
+        | (0x78, 0x54, 0x2e) | (0x90, 0x94, 0xe4) | (0xb8, 0xa3, 0x86) => "D-Link",
+        // Google (Nest, Home, Chromecast, OnHub)
+        (0x54, 0x60, 0x09) | (0xf4, 0xf5, 0xdb) | (0x48, 0xd6, 0xd5)
+        | (0x94, 0x95, 0xa0) | (0x30, 0xfd, 0x38) | (0xd4, 0xf5, 0x47)
+        | (0xa4, 0x77, 0x33) | (0x20, 0xdf, 0xb9) | (0x64, 0x16, 0x7f)
+        | (0xf8, 0x8f, 0xca) | (0x38, 0x8b, 0x59) => "Google",
+        // Amazon (Echo, Ring, Fire TV)
+        (0x00, 0xbb, 0x3a) | (0x0c, 0x47, 0xc9) | (0x10, 0xae, 0x60)
+        | (0x34, 0xd2, 0x70) | (0x40, 0xb4, 0xcd) | (0x68, 0x37, 0xe9)
+        | (0x74, 0xc2, 0x46) | (0xa0, 0x02, 0xdc) | (0xf0, 0x27, 0x2d)
+        | (0xfc, 0x65, 0xde) | (0x44, 0x65, 0x0d) => "Amazon",
+        // Arris / Commscope (cable modems, gateways)
+        (0x00, 0x1d, 0xd1) | (0x00, 0x1e, 0x46) | (0x00, 0x26, 0xb8)
+        | (0x18, 0x1b, 0xeb) | (0x28, 0x76, 0x10) | (0x34, 0x37, 0x59)
+        | (0x44, 0xe0, 0x8e) | (0x74, 0x91, 0x1a) | (0x8c, 0x3b, 0xad)
+        | (0xac, 0x3a, 0x67) | (0xcc, 0xbe, 0x59) => "Arris/Commscope",
+        // Eero (Amazon mesh)
+        (0x00, 0xbd, 0x27) | (0x50, 0x3e, 0xaa) | (0xf8, 0xbb, 0xbf) => "Eero",
+        // Starlink / SpaceX
+        (0x98, 0x25, 0x4a) | (0xd4, 0x3d, 0x7e) | (0x9c, 0x8e, 0x99)
+        | (0xa4, 0xbe, 0x2b) | (0x20, 0xa6, 0x0c) => "Starlink",
+        // Huawei
+        (0x00, 0x18, 0x82) | (0x00, 0x25, 0x9e) | (0x00, 0xe0, 0xfc)
+        | (0x18, 0xde, 0xd7) | (0x28, 0x6e, 0xd4) | (0x48, 0x00, 0x31)
+        | (0x54, 0x89, 0x98) | (0x70, 0x72, 0xcf) | (0xac, 0xe8, 0x7b)
+        | (0xcc, 0x96, 0xa0) | (0xe8, 0xcd, 0x2d) | (0x48, 0xdb, 0x50) => "Huawei",
+        // Xiaomi
+        (0x00, 0xec, 0x0a) | (0x18, 0x59, 0x36) | (0x28, 0xe3, 0x1f)
+        | (0x34, 0x80, 0xb3) | (0x58, 0x44, 0x98) | (0x64, 0x09, 0x80)
+        | (0x74, 0x23, 0x44) | (0x98, 0xfa, 0x9b) | (0xf4, 0x8b, 0x32)
+        | (0xa4, 0xc1, 0x38) | (0xd4, 0x61, 0x9d) => "Xiaomi",
+        // Motorola
+        (0x00, 0x04, 0x56) | (0x00, 0x0e, 0x6d) | (0x00, 0x12, 0xce)
+        | (0x00, 0x15, 0xa0) | (0x58, 0x47, 0xca) | (0x9c, 0x4f, 0xcf) => "Motorola",
+        // Synology (NAS)
+        (0x00, 0x11, 0x32) | (0xbc, 0x54, 0x51) => "Synology",
+        // QNAP (NAS)
+        (0x00, 0x08, 0x9b) | (0x24, 0x5e, 0xbe) => "QNAP",
         // VMware (virtual)
         (0x00, 0x50, 0x56) | (0x00, 0x0c, 0x29) | (0x00, 0x05, 0x69) => "VMware (Virtual)",
+        // VirtualBox
+        (0x08, 0x00, 0x27) => "VirtualBox (Virtual)",
+        // Microsoft (Hyper-V, Surface)
+        (0x00, 0x15, 0x5d) | (0x28, 0x18, 0x78) | (0x7c, 0x1e, 0x52) => "Microsoft",
+        // Dell
+        (0x00, 0x14, 0x22) | (0x18, 0xa9, 0x9b) | (0x44, 0xa8, 0x42)
+        | (0xb0, 0x83, 0xfe) | (0xbc, 0x30, 0x5b) | (0xf8, 0xbc, 0x12) => "Dell",
+        // HP / HPE
+        (0x00, 0x17, 0xa4) | (0x3c, 0xd9, 0x2b) | (0x9c, 0xb6, 0x54)
+        | (0xa0, 0xd3, 0xc1) | (0xb4, 0x99, 0xba) | (0x94, 0x57, 0xa5) => "HP",
         _ => "Unknown",
-    }
+    };
+    Some(label)
 }
 
-/// Infer OS from TTL and TCP window. TTL=128 is Windows-exclusive;
-/// TTL=255 is network equipment; anything else is ambiguous so we
-/// only return a label when we have a strong signal.
-fn infer_os(ttl: u8, tcp_window: u16) -> Option<&'static str> {
+/// Infer OS from TTL and TCP window size, with hardware + hostname context to
+/// rule out impossible combinations (e.g. macOS on Raspberry Pi hardware).
+/// Pass both manufacturer (from OUI) and hostname (from reverse DNS) for best results.
+fn infer_os(ttl: u8, tcp_window: u16, manufacturer: &str) -> Option<&'static str> {
+    let mfr = manufacturer.to_lowercase();
+    // Raspberry Pi and other SBCs can only run Linux variants — never macOS/Windows
+    let linux_only = mfr.contains("raspberry") || mfr.contains("orange pi")
+        || mfr.contains("rockchip") || mfr.contains("allwinner");
+
     match ttl {
-        128 => Some("Windows"),
+        128 => {
+            if linux_only { None } else { Some("Windows") }
+        }
         255 => Some("Network Equipment"),
         64 | 63 => {
             match tcp_window {
-                65535 => Some("macOS/iOS"),
+                65535 => {
+                    if linux_only {
+                        // Pi running Ubuntu/Debian commonly uses window=65535 — label as Linux
+                        Some("Linux")
+                    } else {
+                        Some("macOS / Linux")
+                    }
+                }
                 14600 | 29200 | 43800 => Some("Linux"),
-                _ => None,
+                5840 | 8192 | 17520 | 32768 => Some("Android / Linux"),
+                _ => {
+                    if linux_only { Some("Linux") } else { None }
+                }
             }
         }
-        _ => None,
+        _ => {
+            if linux_only { Some("Linux") } else { None }
+        }
     }
 }
 
-/// Build a GeoInfo for a local-network IP, using what we know from
-/// the packet itself (MAC OUI, TTL, window, hostname, ports).
+/// Guess a human-readable process/service name from a resolved hostname.
+/// Used when packet-level port→PID lookup fails (e.g. root daemons invisible to lsof without sudo).
+fn guess_process_from_hostname(hostname: &str) -> Option<&'static str> {
+    let h = hostname.to_lowercase();
+    // MDM / Device Management
+    if h.ends_with(".jumpcloud.com") || h == "jumpcloud.com" { return Some("JumpCloud Agent"); }
+    if h.ends_with(".kandji.io")     || h == "kandji.io"     { return Some("Kandji MDM"); }
+    if h.ends_with(".jamf.com")      || h == "jamf.com"      { return Some("Jamf MDM"); }
+    if h.ends_with(".microsoft.com") && (h.contains("intune") || h.contains("mdm") || h.contains("manage")) {
+        return Some("Microsoft Intune");
+    }
+    // Apple OS & iCloud services
+    if h.ends_with(".apple.com") || h.ends_with(".icloud.com") || h.ends_with(".mzstatic.com") {
+        return Some("Apple Services");
+    }
+    if h.ends_with(".push.apple.com") { return Some("Apple Push (APNs)"); }
+    // Microsoft / Windows
+    if h.ends_with(".microsoft.com") || h.ends_with(".windowsupdate.com")
+        || h.ends_with(".live.com") || h.ends_with(".msn.com") || h.ends_with(".skype.com") {
+        return Some("Microsoft Services");
+    }
+    if h.ends_with(".office.com") || h.ends_with(".office365.com") || h.ends_with(".sharepoint.com") {
+        return Some("Microsoft 365");
+    }
+    // Google
+    if h.ends_with(".googleapis.com") || h.ends_with(".google.com")
+        || h.ends_with(".googleusercontent.com") || h.ends_with(".gstatic.com") {
+        return Some("Google Services");
+    }
+    // Cloudflare / CDN
+    if h.ends_with(".cloudflare.com") || h.ends_with(".cloudflaressl.com") {
+        return Some("Cloudflare");
+    }
+    if h.ends_with(".akamai.net") || h.ends_with(".akamaiedge.net") || h.ends_with(".akamaized.net") {
+        return Some("Akamai CDN");
+    }
+    if h.ends_with(".fastly.net") || h.ends_with(".fastlylb.net") { return Some("Fastly CDN"); }
+    // AWS / Azure / GCP
+    if h.ends_with(".amazonaws.com") { return Some("AWS"); }
+    if h.ends_with(".azure.com") || h.ends_with(".azurewebsites.net") { return Some("Azure"); }
+    if h.ends_with(".cloud.google.com") { return Some("Google Cloud"); }
+    // Security & Identity
+    if h.ends_with(".okta.com") || h.ends_with(".okta-emea.com") { return Some("Okta Identity"); }
+    if h.ends_with(".crowdstrike.com") { return Some("CrowdStrike"); }
+    if h.ends_with(".sentinelone.net") { return Some("SentinelOne"); }
+    if h.ends_with(".cylance.com")     { return Some("Cylance"); }
+    if h.ends_with(".sophos.com")      { return Some("Sophos"); }
+    // Communication / Productivity
+    if h.ends_with(".slack.com") || h.ends_with(".slack-msgs.com") { return Some("Slack"); }
+    if h.ends_with(".zoom.us") || h.ends_with(".zoom.com") { return Some("Zoom"); }
+    if h.ends_with(".teams.microsoft.com") { return Some("Microsoft Teams"); }
+    if h.ends_with(".dropbox.com") || h.ends_with(".dropboxstatic.com") { return Some("Dropbox"); }
+    // Browsers / Telemetry
+    if h.ends_with(".firefox.com") || h.ends_with(".mozilla.com") || h.ends_with(".mozilla.net") {
+        return Some("Firefox");
+    }
+    None
+}
+
+/// Extract MAC bytes from an EUI-64 IPv6 link-local address (fe80::/10).
+/// EUI-64 embeds the MAC as: [3 bytes] ff:fe [3 bytes], with bit 6 of byte 0 flipped.
+fn mac_from_eui64(ipv6: &str) -> Option<Vec<u8>> {
+    let addr: std::net::Ipv6Addr = ipv6.parse().ok()?;
+    let segs = addr.octets();
+    // Bytes 8-15 are the interface ID; EUI-64 has ff:fe at positions 11-12
+    if segs[11] == 0xff && segs[12] == 0xfe {
+        let mac = vec![
+            segs[8] ^ 0x02, // flip universal/local bit back
+            segs[9],
+            segs[10],
+            segs[13],
+            segs[14],
+            segs[15],
+        ];
+        // Suppress all-zeros result
+        if mac.iter().all(|&b| b == 0) { return None; }
+        Some(mac)
+    } else {
+        None
+    }
+}
+
+/// Returns true if the IP looks like a typical LAN gateway (.1 or .254 last octet).
+fn is_likely_gateway(ip: &str) -> bool {
+    if let Some(last) = ip.rsplit('.').next() {
+        return last == "1" || last == "254";
+    }
+    false
+}
+
+/// Build a GeoInfo for a local-network IP. Results are cached per IP so the
+/// OS guess doesn't flip as TCP window size fluctuates between packets.
+/// Pass force=true only when the hostname resolves (to refresh the city field).
 fn classify_local_ip(
     ip: &str,
     mac: &str,
     ttl: u8,
     tcp_window: u16,
     port: u16,
+    force_refresh: bool,
 ) -> GeoInfo {
-    let manufacturer = if !mac.is_empty() {
-        let parts: Vec<u8> = mac.split(':')
+    // Return cached result unless we need to refresh (e.g. hostname just resolved)
+    if !force_refresh {
+        if let Some(cached) = LAN_DEVICE_CACHE.lock().unwrap().get(ip).cloned() {
+            // Always refresh the service hint from the port (may be new port)
+            let mut c = cached;
+            if let Some(svc) = local_port_service(port) {
+                let svc_tag = format!(" · {}", svc);
+                if !c.org.contains(&svc_tag) {
+                    c.org = format!("{}{}", c.org.split(" · ").next().unwrap_or(&c.org), svc_tag);
+                }
+            }
+            return c;
+        }
+    }
+
+    // Try MAC from the packet first; for IPv6 EUI-64, extract from the address.
+    let mac_bytes: Vec<u8> = if !mac.is_empty() {
+        mac.split(':')
             .filter_map(|h| u8::from_str_radix(h, 16).ok())
-            .collect();
-        lookup_oui(&parts).to_string()
+            .collect()
+    } else if ip.starts_with("fe80") || ip.starts_with("fd") || ip.starts_with("fc") {
+        mac_from_eui64(ip).unwrap_or_default()
+    } else {
+        vec![]
+    };
+
+    let manufacturer = if !mac_bytes.is_empty() {
+        match lookup_oui(&mac_bytes) {
+            Some(label) => label.to_string(),
+            None => "Randomized MAC (Privacy Mode)".to_string(),
+        }
     } else {
         "Unknown".to_string()
     };
 
-    let os_guess = infer_os(ttl, tcp_window)
+    let hostname = HOSTNAME_CACHE.lock().unwrap().get(ip).cloned()
+        .unwrap_or_default();
+
+    // Combine manufacturer + hostname for OS hints — hostname catches Pi/Ubuntu
+    // even when OUI isn't in the table (e.g. newer Pi OUI blocks not yet added).
+    let hn_lower = hostname.to_lowercase();
+    let hostname_linux_hint = hn_lower.contains("raspberry") || hn_lower.contains("raspberrypi")
+        || hn_lower.contains("ubuntu") || hn_lower.contains("debian")
+        || hn_lower.contains("rpi") || hn_lower.contains("linux")
+        || hn_lower.contains("fedora") || hn_lower.contains("arch");
+    let effective_mfr = if hostname_linux_hint && manufacturer == "Unknown" {
+        "Raspberry Pi".to_string() // treat as linux-only for OS inference
+    } else {
+        manufacturer.clone()
+    };
+
+    let os_guess = infer_os(ttl, tcp_window, &effective_mfr)
         .map(|s| s.to_string())
         .unwrap_or_else(|| "Unknown OS".to_string());
 
@@ -180,21 +425,30 @@ fn classify_local_ip(
         .map(|s| format!(" · {}", s))
         .unwrap_or_default();
 
-    let hostname = HOSTNAME_CACHE.lock().unwrap().get(ip).cloned()
-        .unwrap_or_default();
+    let device_role = if is_likely_gateway(ip) {
+        if manufacturer != "Unknown" && !manufacturer.starts_with("Randomized") {
+            format!("Gateway / Router ({})", manufacturer)
+        } else {
+            "Gateway / Router".to_string()
+        }
+    } else {
+        format!("LAN Device{}", service)
+    };
 
-    let city = if hostname.is_empty() { ip.to_string() } else { hostname };
-    let region = os_guess;
-    let asn = manufacturer;
-    let org = format!("LAN Device{}", service);
-
-    GeoInfo {
+    let city = if hostname.is_empty() { ip.to_string() } else { hostname.clone() };
+    let result = GeoInfo {
         city,
-        region,
+        region: os_guess,
         country_code: "LAN".to_string(),
-        asn,
-        org,
+        asn: manufacturer,
+        org: device_role,
+    };
+
+    // Cache unless hostname is still unknown (refresh when it resolves)
+    if !hostname.is_empty() || force_refresh {
+        LAN_DEVICE_CACHE.lock().unwrap().insert(ip.to_string(), result.clone());
     }
+    result
 }
 
 fn hostname_cache_path() -> std::path::PathBuf {
@@ -599,12 +853,45 @@ pub fn start_active_probe(app: AppHandle) {
                 .creation_flags(CREATE_NO_WINDOW)
                 .output();
             #[cfg(target_os = "macos")]
-            let pid_output = Command::new("lsof")
-                .args(["-i", "-P", "-n", "-sTCP:LISTEN,ESTABLISHED"])
+            {
+                // First pass: unprivileged lsof (user-owned processes)
+                let outputs: Vec<std::process::Output> = [
+                    Command::new("lsof").args(["-i", "-P", "-n", "-sTCP:LISTEN,ESTABLISHED"]).output().ok(),
+                    // Second pass: sudo lsof — picks up root daemons (JumpCloud, MDM agents, etc.)
+                    // Silently skipped if passwordless sudo is not configured for lsof.
+                    Command::new("sudo").args(["-n", "lsof", "-i", "-P", "-n", "-sTCP:LISTEN,ESTABLISHED"]).output().ok(),
+                ].into_iter().flatten().collect();
+
+                for out in outputs {
+                    for line in String::from_utf8_lossy(&out.stdout).lines() {
+                        let parts: Vec<&str> = line.split_whitespace().collect();
+                        // lsof: COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME
+                        if parts.len() >= 9 && parts[0] != "COMMAND" {
+                            if let (Some(cmd), Some(pid_str), Some(name)) =
+                                (parts.get(0), parts.get(1), parts.get(8))
+                            {
+                                let local_part = name.split("->").next().unwrap_or(name);
+                                if let Some(port_str) = local_part.split(':').last() {
+                                    if let Ok(port) = port_str.parse::<u16>() {
+                                        if let Ok(pid_val) = pid_str.parse::<usize>() {
+                                            new_map.entry(port).or_insert((pid_val as u32, cmd.to_string()));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            #[cfg(target_os = "windows")]
+            let pid_output = Command::new("netstat")
+                .args(["-ano", "-p", "tcp"])
+                .creation_flags(CREATE_NO_WINDOW)
                 .output();
             #[cfg(not(any(target_os = "windows", target_os = "macos")))]
             let pid_output = Command::new("ss").args(["-tunp"]).output();
 
+            #[cfg(not(target_os = "macos"))]
             if let Ok(out) = pid_output {
                 let stdout = String::from_utf8_lossy(&out.stdout);
 
@@ -628,24 +915,6 @@ pub fn start_active_probe(app: AppHandle) {
                                                 .unwrap_or_else(|| "System Process".to_string());
                                             new_map.insert(port, (pid_val as u32, proc_name));
                                         }
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    #[cfg(target_os = "macos")]
-                    // lsof: COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME
-                    // NAME: 192.168.1.1:port->remote:port or *:port (LISTEN)
-                    if parts.len() >= 9 && parts[0] != "COMMAND" {
-                        if let (Some(cmd), Some(pid_str), Some(name)) =
-                            (parts.get(0), parts.get(1), parts.get(8))
-                        {
-                            let local_part = name.split("->").next().unwrap_or(name);
-                            if let Some(port_str) = local_part.split(':').last() {
-                                if let Ok(port) = port_str.parse::<u16>() {
-                                    if let Ok(pid_val) = pid_str.parse::<usize>() {
-                                        new_map.insert(port, (pid_val as u32, cmd.to_string()));
                                     }
                                 }
                             }
@@ -689,6 +958,8 @@ pub fn start_active_probe(app: AppHandle) {
                 };
                 HOSTNAME_CACHE.lock().unwrap().insert(ip.clone(), resolved.clone());
                 HOSTNAME_IN_FLIGHT.lock().unwrap().remove(&ip);
+                // Invalidate LAN device cache for this IP so the city field refreshes with the hostname
+                LAN_DEVICE_CACHE.lock().unwrap().remove(&ip);
                 had_new = true;
                 let _ = hostname_app.emit("hostname-resolved", serde_json::json!({
                     "ip": ip,
@@ -883,7 +1154,7 @@ pub fn start_active_probe(app: AppHandle) {
 
                             // GeoIP: local IPs get instant classification; public IPs queued for resolution
                             let geo_info: Option<GeoInfo> = if is_local_ip(&remote_addr) {
-                                Some(classify_local_ip(&remote_addr, &pkt_mac, ttl, tcp_window, remote_port))
+                                Some(classify_local_ip(&remote_addr, &pkt_mac, ttl, tcp_window, remote_port, false))
                             } else {
                                 let cache = GEO_CACHE.lock().unwrap();
                                 let resolved = cache.get(&remote_addr).cloned();
@@ -926,8 +1197,18 @@ pub fn start_active_probe(app: AppHandle) {
                                     (0u32, "Guardian Kernel".to_string())
                                 } else {
                                     let guard = PORT_MAP.lock().unwrap();
-                                    guard.get(&local_port).cloned()
-                                        .unwrap_or((0, "Guardian Kernel".to_string()))
+                                    let resolved = guard.get(&local_port).cloned();
+                                    drop(guard);
+                                    resolved.unwrap_or_else(|| {
+                                        // PORT_MAP missed — root daemon (e.g. JumpCloud) invisible to lsof without sudo.
+                                        // Try to identify by resolved hostname of the remote IP.
+                                        let label = HOSTNAME_CACHE.lock().unwrap()
+                                            .get(&remote_addr)
+                                            .and_then(|h| guess_process_from_hostname(h))
+                                            .map(|s| s.to_string())
+                                            .unwrap_or_else(|| "Guardian Kernel".to_string());
+                                        (0, label)
+                                    })
                                 };
 
                                 NetworkEvent {
@@ -945,6 +1226,23 @@ pub fn start_active_probe(app: AppHandle) {
                             });
                             entry.geo_info = geo_info;
                             entry.bytes += packet.len();
+
+                            // Retroactively resolve process name for connections that were
+                            // created before the hostname resolved (e.g. JumpCloud, root daemons).
+                            if entry.process == "Guardian Kernel" && local_port != 0 {
+                                // First check if PORT_MAP now has it (process may have started after connection)
+                                let port_hit = PORT_MAP.lock().unwrap().get(&local_port).cloned();
+                                if let Some((pid, name)) = port_hit {
+                                    entry.pid = pid;
+                                    entry.process = name;
+                                } else if let Some(name) = HOSTNAME_CACHE.lock().unwrap()
+                                    .get(&remote_addr)
+                                    .and_then(|h| guess_process_from_hostname(h))
+                                    .map(|s| s.to_string())
+                                {
+                                    entry.process = name;
+                                }
+                            }
 
                             // Update history — cap at 5000 entries
                             let now = Instant::now();

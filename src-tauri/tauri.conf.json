@@ -1,6 +1,6 @@
 {
   "productName": "Vigilance",
-  "version": "3.0.1",
+  "version": "3.1.0",
   "identifier": "com.vigilance.app",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -38,6 +38,6 @@
       "resources/config.json": "config.json",
       "resources/README.txt": "README.txt"
     },
-    "copyright": "C 2026 Vigilance Security"
+    "copyright": "© 2026 Daniel Andries"
   }
 }

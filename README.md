@@ -4,7 +4,7 @@
 <img width="2106" height="1184" alt="vigilance-app-record" src="https://github.com/user-attachments/assets/4269212a-c45e-437e-ab24-890f78f226a7" />
 
 
-**Current Release: v3.0.1 Stable — The Local Intelligence Update** — [Changelog](./CHANGELOG.md)
+**Current Release: v3.1.0 Stable — The Guardian Clarity Update** — [Changelog](./CHANGELOG.md)
 
 Vigilance-Desktop has officially moved from prototype to a **production-grade security engine**. It provides real-time visibility into network traffic, automated AI threat analysis, and kernel-level protocol transparency through a unified Desktop experience.
 
@@ -35,19 +35,17 @@ If you prefer not to touch BPF permissions:
 sudo /Applications/Vigilance.app/Contents/MacOS/vigilance
 ```
 
-## 💎 v3.0.1 Key Highlights
+## 💎 v3.1.0 Key Highlights
 
-**Local Network Intelligence**: Every device on your LAN is now fully classified in real-time — no external API call needed. IP, MAC OUI (vendor), TTL, TCP window size, and open port are combined to identify the device type, OS, and service (DNS server, SSH server, MySQL, etc.). LAN connections display in blue with a Network icon, clearly separate from internet traffic.
+**Gemini API Key in Settings**: Paste your Gemini API key directly in the app — no manual config.json editing. "Get a free API key →" opens Google AI Studio in your browser. Model updated to `gemini-2.5-flash`. Live notification banners alert you when the key is missing or quota is exceeded, with a one-click jump to Settings.
 
-**Smart Multicast Scoring**: Multicast traffic is now scored in three tiers. Standard discovery (mDNS 224.0.0.251, SSDP, LLMNR, IPv6 equivalents) scores 0 — no noise. Routing protocol multicast on a desktop (OSPF, PIM, VRRP) scores 20 and is flagged for investigation — these only appear on routers, so seeing them on a workstation is meaningful. Unknown multicast groups score 10 for visibility.
+**Root Daemon Process Attribution**: Connections from root-owned processes (JumpCloud agent, MDM agents, system daemons) that were previously labeled "Guardian Kernel" are now identified by hostname. As soon as reverse DNS resolves `*.jumpcloud.com`, the connection is relabeled "JumpCloud Agent" — no restart needed. `sudo lsof` fallback on macOS for full PID visibility when passwordless sudo is configured.
 
-**Reverse DNS (OS-native)**: A dedicated hostname resolution thread runs `getnameinfo` via the OS DNS resolver — no external API. LAN devices with registered hostnames (DHCP, mDNS) show their name instead of the raw IP. Public IPs with PTR records (AWS, Cloudflare CDN nodes, etc.) also resolve.
+**Stable Live View**: Process groups and individual connections no longer jump around as new packets arrive. First-seen order is tracked and enforced — data rates update live without reordering. Column header sorts still work on demand.
 
-**MAC OUI Fingerprinting**: The source MAC address from each Ethernet frame is matched against a built-in OUI table covering Apple, Samsung, Intel, Raspberry Pi, TP-Link, Netgear, ASUS, Ubiquiti, and VMware virtual adapters.
+**Expanded LAN Intelligence**: OUI vendor table grew from 8 to 20+ vendors (Starlink, Google, Amazon, Cisco, D-Link, Arris, Eero, Huawei, Xiaomi, Motorola, Synology, QNAP, Dell, HP). Randomized MAC addresses (iOS/Android privacy mode) are now detected and labeled. IPv6 EUI-64 addresses yield MAC lookups. Hardware-aware OS detection prevents false "macOS" labels on Raspberry Pi hardware. LAN device classification is cached per IP — OS label no longer flips between packets.
 
-**OS Fingerprinting (TTL + TCP Window)**: TTL=128 uniquely identifies Windows. TTL=255 identifies network equipment. TCP window size (64240 = Windows 10/11, 65535 = macOS/iOS) breaks ties on 64-TTL devices. Works identically on Windows and macOS captures.
-
-**GeoIP Reliability**: 6-provider fallback chain (ipinfo.io → ipapi.co → ipwhois.app → api.ip.sb → geojs.io → ip-api.com) with rustls-tls for consistent cross-platform TLS. Persistent disk cache and session-level GEO_FAILED set prevent rate-limit spirals.
+**Copyright corrected**: © 2026 Daniel Andries across all bundle metadata.
 
 🛡️ Setup & Troubleshooting
 For hardware setup (Npcap), compiler linker fixes, and driver permissions:

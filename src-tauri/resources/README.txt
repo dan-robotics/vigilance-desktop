@@ -1,5 +1,5 @@
 ================================================================================
-  VIGILANCE DESKTOP v3.0.1 - Network Monitoring & Security Shield
+  VIGILANCE DESKTOP v3.1.0 - Network Monitoring & Security Shield
 ================================================================================
 
 WHAT IS VIGILANCE?
@@ -59,6 +59,7 @@ LICENSE
 -------
 MIT License
 Copyright (c) 2026 Daniel Andries
+Version 3.1.0
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal

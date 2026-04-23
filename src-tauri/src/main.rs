@@ -47,10 +47,37 @@ fn get_api_key(app: tauri::AppHandle) -> Result<String, String> {
         .ok_or_else(|| "GEMINI_API_KEY not found in config.json".to_string())
 }
 
+#[tauri::command]
+fn open_url(url: String) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    std::process::Command::new("open").arg(&url).spawn().map_err(|e| e.to_string())?;
+    #[cfg(target_os = "windows")]
+    std::process::Command::new("cmd").args(["/c", "start", "", &url]).spawn().map_err(|e| e.to_string())?;
+    #[cfg(target_os = "linux")]
+    std::process::Command::new("xdg-open").arg(&url).spawn().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+fn set_api_key(app: tauri::AppHandle, key: String) -> Result<(), String> {
+    let path = config_path(&app)?;
+    let mut config: serde_json::Value = if path.exists() {
+        let s = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+        serde_json::from_str(&s).unwrap_or(serde_json::json!({}))
+    } else {
+        serde_json::json!({})
+    };
+    config["GEMINI_API_KEY"] = serde_json::Value::String(key);
+    let out = serde_json::to_string_pretty(&config).map_err(|e| e.to_string())?;
+    std::fs::write(&path, out).map_err(|e| e.to_string())
+}
+
 fn main() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             get_api_key,
+            set_api_key,
+            open_url,
             sniffer::block_ip,
             sniffer::get_firewall_rules,
             sniffer::delete_firewall_rule,
@@ -66,7 +93,7 @@ fn main() {
                 use tauri::menu::{AboutMetadata, MenuBuilder, SubmenuBuilder};
                 let about = AboutMetadata {
                     name:      Some("Vigilance".into()),
-                    version:   Some("3.0.1".into()),
+                    version:   Some("3.1.0".into()),
                     copyright: Some("© 2026 Daniel Andries".into()),
                     license:   Some("MIT License\n\nCopyright © 2026 Daniel Andries\n\nPermission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the \"Software\"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.".into()),
                     authors:   Some(vec!["Daniel Andries".into()]),
