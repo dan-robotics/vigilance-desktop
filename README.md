@@ -54,8 +54,8 @@ The OUI vendor table now covers 25+ major manufacturers (Starlink, Google, Amazo
 | **Universal DMG** | `Vigilance_3.2.0_universal.dmg` | `fa9832e033742394f144fe47f3c98cb7bcbb1a1e96958c5cc1cd5ff18c51c097` |
 | **Apple Silicon** | `Vigilance_3.2.0_aarch64.dmg` | `1a038707659d6216f35bdca0ac79d74a813862d97f7b3f6e1f0c9c5345c4e0f8` |
 | **Intel Native** | `Vigilance_3.2.0_x64.dmg` | `a76755063ab2b573d1e2c072e13fce8aa12bd7dd1f54cc6da532c12563f29ddc` |
-| **Universal Portable** | `Vigilance-MacOS-Universal-Portable-v3.2.0.zip
-` | `efe14ef783c621ad0c9ff0008048aa9cd1027ac29a4f3f8bc7537ca5b267a8b2` |
+| **Universal Portable** | `Vigilance-MacOS-Universal-Portable-v3.2.0.zip` |
+`efe14ef783c621ad0c9ff0008048aa9cd1027ac29a4f3f8bc7537ca5b267a8b2` |
 
 ### Windows (Installer / Portable)
 | Method | Filename | SHA-256 Checksum |
