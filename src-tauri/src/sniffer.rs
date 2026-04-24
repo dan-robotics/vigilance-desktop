@@ -277,6 +277,7 @@ fn infer_os(ttl: u8, tcp_window: u16, manufacturer: &str) -> Option<&'static str
 
 /// Normalize a process name that was truncated by macOS MAXCOMLEN (16 chars) or contains
 /// bundle-ID prefixes, mapping it to a clean human-readable form.
+#[cfg(target_os = "macos")]
 fn normalize_proc_name(name: &str) -> String {
     if name.starts_with("Google Chrome")  { return "Google Chrome".to_string(); }
     if name.starts_with("firefox") || name.starts_with("Firefox") { return "Firefox".to_string(); }
