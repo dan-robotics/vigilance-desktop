@@ -1,69 +1,45 @@
 # Vigilance-Desktop Architecture Block Diagram
 
-## High Level Logic Flow
+# Vigilance Desktop Architecture v3.2.0 (Stable)
+
+## High-Level Logic Flow (Pure Rust)
 
 ```text
 +----------------------------------------------------------------------+
-|                      USER INTERFACE (React)                          |
+|                        USER INTERFACE (egui)                         |
 |                                                                      |
 |  +----------------+  +-------------+  +-----------+  +-----------+  |
 |  | Live Feed      |  | Walls (WFP) |  | Guardian  |  | Notifs    |  |
-|  | (Grouped View) |  |             |  | (AI Trace)|  | + Export  |  |
+|  | (egui::Grid)   |  |             |  | (AI Trace)|  | + Export  |  |
 |  +----------------+  +-------------+  +-----------+  +-----------+  |
 |        ^                   ^               ^    ^          ^  ^      |
 |        |                   |               |    |          |  |      |
-|  [Ask AI Tab]         [Ask AI Tab]   [Ask AI]  [Ask AI]  [Ask AI]   |
-|  [banner result]                     [per-card] [tab]    [per-card]  |
+|  Shared Event Vec     Invoke Logic    Geo Cache     Invoke Logic    |
+|  (Mutex Guard)             |          (Immediate)          |         |
 +--------|-------------------|---------------|---------------|--------+
-         |                   |               |               |
-   network-event        Invoke Commands  geo-resolved    Invoke
-   (500ms pulse)             |           (IP push)           |
          |                   |               |               |
          v                   v               v               v
 +----------------------------------------------------------------------+
-|                      TAURI BACKEND (Rust)                            |
+|                        RUST BACKEND (Tokio)                          |
 |                                                                      |
 |  +---------------------+   +--------------------+  +--------------+ |
 |  | SNIFFER THREAD      |   | GEOIP THREAD       |  | PROCESS      | |
-|  | (500ms Pulses)      |   | (Async / Tokio)    |  | RESOLVER     | |
+|  | (DPI Engine)        |   | (Async / Tokio)    |  | RESOLVER     | |
 |  |                     |   |                    |  | (Every 3s)   | |
-|  | - IPv4 + IPv6       |   | - Up to 8 parallel |  |              | |
-|  | - Direction detect  |   |   lookups          |  | netstat/lsof | |
-|  |   (src/dst vs       |   | - ipinfo.io        |  | → PORT_MAP   | |
-|  |    local IPs)       |   |   + ip-api fallback|  +--------------+ |
-|  | - Flow aggregation  |   | - GEO_CACHE 2000   |                   |
-|  |   IP:Port:Proto:Dir |   | - emit geo-resolved|                   |
-|  +----------+----------+   +--------+-----------+                   |
+|  | - TLS SNI / DNS     |   | - 6-provider chain |  | netstat/lsof | |
+|  | - Supreme Finger    |   | - GEO_CACHE 2000   |  | → PORT_MAP   | |
+|  +----------+----------+   +--------+-----------+  +--------------+ |
 |             |                       |                               |
-|             +----------+------------+                               |
-|                        |                                            |
-|                        v                                            |
-|              +--------------------+                                 |
-|              |  GLOBAL PORT_MAP   |                                 |
-|              |  GEO_CACHE         |                                 |
-|              |  GEO_IN_FLIGHT     |                                 |
-|              | (Lazy Static Mutex)|                                 |
-|              +--------------------+                                 |
-|                        |                                            |
-|          +-------------+-------------------+                        |
-|          |             |                   |                        |
-|  +-------v----------+  |       +-----------v---------+              |
-|  | HEURISTIC ENGINE |  |       | RUNTIME CONFIG      |              |
-|  | (Score 0-100)    |  |       | get_api_key()       |              |
-|  | - IP reputation  |  |       | reads config.json   |              |
-|  | - Port analysis  |  |       | (never in bundle)   |              |
-|  | - Beaconing      |  |       +---------------------+              |
-|  | - Protocol mismatch|                                             |
-|  +------------------+  |                                            |
-|                        |                                            |
-|          +-------------+-------------------+                        |
-|          |                                 |                        |
-|  +-------v-----------+         +-----------v----------+             |
-|  | FIREWALL          |         | NATIVE CSV EXPORT    |             |
-|  | Win: WFP/netsh    |         | (rfd Dialog)         |             |
-|  | Mac: pfctl + JSON |         | Traffic log +        |             |
-|  | block_ip()        |         | Detections log       |             |
-|  +-------------------+         +----------------------+             |
+|             v                       v                               |
+|    +---------------------------------------------------------+      |
+|    | GLOBAL STATE: DEVICE_FINGERPRINT, GEO_CACHE, PORT_MAP   |      |
+|    +---------------------------------------------------------+      |
+|             |                       |                               |
+|  +-------v----------+      +-----------v---------+                  |
+|  | GUARDIAN ENGINE  |      | FIREWALL ENGINE     |                  |
+|  | - Beaconing      |      | Win: netsh/WFP      |                  |
+|  | - Blacklist Check |      | Mac: pfctl -E       |                  |
+|  +------------------+      +---------------------+                  |
 +----------------------------------------------------------------------+
 ```
 

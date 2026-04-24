@@ -215,6 +215,7 @@ export default function App() {
   const processOrderRef = useRef<string[]>([]);
   const connectionOrderRef = useRef<string[]>([]);
   const [isFilterOpen, setIsFilterOpen] = useState(false);
+  const filterDropdownRef = useRef<HTMLDivElement>(null);
   const [filterType, setFilterType] = useState<'all' | 'suspicious' | 'blocked' | 'safe'>('all');
   const [monitoringMode, setMonitoringMode] = useState<'audit' | 'active'>('active');
   const [isPaused, setIsPaused] = useState(false);
@@ -247,6 +248,17 @@ export default function App() {
   }, [connections]);
 
   useEffect(() => { useCloudAiRef.current = useCloudAi; }, [useCloudAi]);
+
+  useEffect(() => {
+    if (!isFilterOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (filterDropdownRef.current && !filterDropdownRef.current.contains(e.target as Node)) {
+        setIsFilterOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [isFilterOpen]);
 
   // 1-second ticker: compute MB/s rate from delta and advance the chart
   useEffect(() => {
@@ -556,7 +568,7 @@ export default function App() {
       if (!prompt) { setAiTabAnalyzing(false); return; }
 
       if (!useCloudAi) {
-        setAiTabAnalysis('Enable Cloud AI in Settings to use tab analysis.');
+        setAiNotification({ type: 'warning', title: 'AI Key Not Configured', message: 'Add your Gemini API key in Settings → AI Guardian to enable cloud analysis.' });
         setAiTabAnalyzing(false);
         return;
       }
@@ -599,6 +611,7 @@ export default function App() {
         note = response.text || 'Analysis complete.';
       } else {
         note = localExplain(det.ip, det.port, det.protocol, det.location, det.reason);
+        setAiNotification({ type: 'warning', title: 'AI Key Not Configured', message: 'Add your Gemini API key in Settings → AI Guardian to enable cloud analysis.' });
       }
       setDetections(prev => prev.map(d => d.id === det.id ? { ...d, aiNote: note } : d));
     } catch (err) {
@@ -620,7 +633,8 @@ export default function App() {
     if (aiAnalysis[conn.id]) return;
     
     if (!useCloudAi) {
-      setAiAnalysis(prev => ({ ...prev, [conn.id]: "Heuristic engine scan complete. Source verified." }));
+      setAiNotification({ type: 'warning', title: 'AI Key Not Configured', message: 'Add your Gemini API key in Settings → AI Guardian to enable cloud analysis.' });
+      setAiAnalysis(prev => ({ ...prev, [conn.id]: localExplain(conn.remoteAddr, conn.remotePort, conn.protocol, conn.location || '', conn.threatLabel || '') }));
       return;
     }
     
@@ -1182,7 +1196,7 @@ export default function App() {
                  </div>
 
             {/* Main Table Section */}
-            <div className="bg-black/40 border border-white/5 rounded-3xl overflow-hidden backdrop-blur-md">
+            <div className="bg-black/40 border border-white/5 rounded-3xl backdrop-blur-md">
               <div className="p-6 border-b border-white/5 flex items-center justify-between bg-white/[0.02]">
                 <div className="flex items-center gap-3">
                   <Cpu className="w-5 h-5 text-emerald-500" />
@@ -1192,45 +1206,45 @@ export default function App() {
                 </div>
                 <div className="flex gap-2 relative">
                   <div className="flex gap-2">
-                    <button 
+                    <button
                       onClick={() => setIsPaused(!isPaused)}
                       className={cn(
                         "flex items-center gap-2 px-3 py-1.5 rounded-lg border transition-all text-xs",
                         isPaused ? "bg-amber-500/10 border-amber-500 text-amber-500" : "border-white/5 text-slate-400 hover:bg-white/5"
                       )}
                     >
-                      {isPaused ? <Zap className="w-3.5 h-3.5" /> : <Activity className="w-3.5 h-3.5" />} 
+                      {isPaused ? <Zap className="w-3.5 h-3.5" /> : <Activity className="w-3.5 h-3.5" />}
                       {isPaused ? 'Resume Feed' : 'Freeze Feed'}
                     </button>
-                    <button 
-                      onClick={() => setIsFilterOpen(!isFilterOpen)}
-                      className={cn(
-                        "flex items-center gap-2 px-3 py-1.5 rounded-lg border transition-all text-xs",
-                        isFilterOpen ? "bg-emerald-500/10 border-emerald-500 text-emerald-500" : "border-white/5 text-slate-400 hover:bg-white/5"
+                    <div ref={filterDropdownRef} className="relative">
+                      <button
+                        onClick={() => setIsFilterOpen(o => !o)}
+                        className={cn(
+                          "flex items-center gap-2 px-3 py-1.5 rounded-lg border transition-all text-xs",
+                          filterType !== 'all' ? "bg-emerald-500/10 border-emerald-500 text-emerald-500" : "border-white/5 text-slate-400 hover:bg-white/5"
+                        )}
+                      >
+                        <Filter className="w-3.5 h-3.5" />
+                        {filterType === 'all' ? 'Filter' : `${filterType.charAt(0).toUpperCase() + filterType.slice(1)}`}
+                      </button>
+                      {isFilterOpen && (
+                        <div className="absolute top-full right-0 mt-2 w-48 bg-[#1a1a1e] border border-white/10 rounded-xl p-2 shadow-2xl z-[9999]">
+                          {(['all', 'safe', 'suspicious', 'blocked'] as const).map((type) => (
+                            <button
+                              key={type}
+                              onClick={() => { setFilterType(type); setIsFilterOpen(false); }}
+                              className={cn(
+                                "w-full text-left px-3 py-2 rounded-lg text-[10px] uppercase tracking-widest font-bold transition-colors",
+                                filterType === type ? "bg-emerald-500/20 text-emerald-500" : "text-slate-500 hover:bg-white/5"
+                              )}
+                            >
+                              {type === 'all' ? 'All Connections' : `${type.charAt(0).toUpperCase() + type.slice(1)} Only`}
+                            </button>
+                          ))}
+                        </div>
                       )}
-                    >
-                      <Filter className="w-3.5 h-3.5" /> Filter
-                    </button>
-                    {isFilterOpen && (
-                      <div className="absolute top-full right-0 mt-2 w-48 bg-[#1a1a1e] border border-white/10 rounded-xl p-2 shadow-2xl z-[100] animate-in fade-in slide-in-from-top-2">
-                        {(['all', 'safe', 'suspicious', 'blocked'] as const).map((type) => (
-                          <button
-                            key={type}
-                            onClick={() => {
-                              setFilterType(type);
-                              setIsFilterOpen(false);
-                            }}
-                            className={cn(
-                              "w-full text-left px-3 py-2 rounded-lg text-[10px] uppercase tracking-widest font-bold transition-colors",
-                              filterType === type ? "bg-emerald-500/20 text-emerald-500" : "text-slate-500 hover:bg-white/5"
-                            )}
-                          >
-                            {type} Connections
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                    <button 
+                    </div>
+                    <button
                       onClick={exportToCsv}
                       className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-white/5 hover:bg-white/5 transition-colors text-xs text-slate-400"
                     >
@@ -1240,7 +1254,7 @@ export default function App() {
                 </div>
               </div>
 
-              <div>
+              <div className="overflow-hidden rounded-b-3xl">
                 <table className="w-full text-left border-collapse table-fixed">
                   <colgroup>
                     <col className="w-20" />
@@ -1274,7 +1288,6 @@ export default function App() {
                         ? groupedConnections.map((group) => (
                           <React.Fragment key={group.process}>
                             <motion.tr
-                              layout
                               onClick={() => {
                                 const next = new Set(expandedProcesses);
                                 if (next.has(group.process)) next.delete(group.process);
@@ -1358,7 +1371,6 @@ export default function App() {
                         : groupedConnections.map((group) => (
                           <React.Fragment key={group.process}>
                             <motion.tr
-                              layout
                               onClick={() => {
                                 const next = new Set(expandedProcesses);
                                 if (next.has(group.process)) next.delete(group.process);

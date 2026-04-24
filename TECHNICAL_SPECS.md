@@ -1,16 +1,34 @@
 # Vigilance-Desktop: Technical Specification & Architecture
 
-## 1. Overview
-Vigilance is a professional-grade, local-first network monitoring and security suite for Windows and macOS. It provides kernel-level packet inspection, real-time process name resolution, GeoIP enrichment, LAN device classification, and dynamic firewall management through a high-performance Rust backend and a polished React/Tauri frontend.
+## 1. Release Notes: Version 3.2.0 - Stable
+**Supreme Visibility Update**
 
-**Current version: v3.0.1 Stable**
+### Key Improvements
+* **SUPREME Style Device Fingerprinting**: Integrated a multi-vector identification suite to eliminate "Unknown" labels on local networks.
+    * **`dns_read_name`**: Custom DNS wire-format parser with compression pointer support for high-fidelity mDNS mapping.
+    * **`extract_mdns`**: Parsers for PTR (services), TXT (Apple model strings/metadata), and A/AAAA records.
+    * **`extract_dhcp`**: Captures Option 12 (hostname) and Option 60 (vendor class) to identify hardware roles.
+    * **`extract_ssdp`**: Extracts UPnP device type URNs from discovery packets.
+    * **`tcp_syn_os`**: Sophisticated OS fingerprinting using TCP window scaling and TTL patterns.
+* **Deep Packet Inspection (DPI) Visibility**:
+    * **TLS SNI Extraction**: Handshake traversal allows viewing hostnames (e.g., `youtube.com`) for encrypted streams instead of raw IP addresses.
+    * **Live DNS Parsing**: Intercepts DNS responses in real-time to backfill hostname labels instantly, bypassing reverse-lookup latency.
+* **Auto-Block Integration**: Backend now supports automatic one-click rule creation; if a threat score exceeds the user-defined threshold, `block_ip` can be invoked automatically.
+* **Beaconing Refinement**: Improved timing analysis with a 10% jitter threshold to accurately flag stable "heartbeat" connections from malicious agents.
 
 ---
 
-## 2. System Architecture
+## 2. Overview
+Vigilance is a professional-grade, local-first network monitoring and security suite for Windows and macOS. It provides kernel-level packet inspection, real-time process name resolution, GeoIP enrichment, LAN device classification, and dynamic firewall management through a high-performance Rust backend and a polished React/Tauri frontend.
+
+**Current version: v3.2.0 Stable**
+
+---
+
+## 3. System Architecture
 The application follows a standard **Tauri** architecture, separating the high-privilege system logic (Rust) from the user interface (React).
 
-### 2.1 Backend (Rust Core) — `src-tauri/src/sniffer.rs`
+### 3.1 Backend (Rust Core) — `src-tauri/src/sniffer.rs`
 
 #### Packet Sniffer Thread
 
@@ -114,7 +132,7 @@ Five helper functions build a complete LAN device profile from packet metadata a
 
 ---
 
-### 2.2 Frontend (React/TypeScript) — `src/App.tsx`
+### 3.2 Frontend (React/TypeScript) — `src/App.tsx`
 
 #### State
 
@@ -172,7 +190,7 @@ Five helper functions build a complete LAN device profile from packet metadata a
 
 ---
 
-## 3. Data Flow
+## 4. Data Flow
 
 ```
 Raw Ethernet Frame (pnet)
@@ -209,7 +227,7 @@ Process Thread (3s poll)
 
 ---
 
-## 4. Performance & Reliability
+## 5. Performance & Reliability
 
 | Concern | Solution |
 |---|---|
@@ -225,7 +243,7 @@ Process Thread (3s poll)
 
 ---
 
-## 5. Security Model
+## 6. Security Model
 
 - **Local-First**: No raw packet data or identity information transmitted to external servers.
 - **GeoIP via Backend Only**: All geo requests from Rust process — not the webview. Eliminates CORS/sandbox issues.
@@ -236,7 +254,7 @@ Process Thread (3s poll)
 
 ---
 
-## 6. Dependency Summary
+## 7. Dependency Summary
 
 | Crate | Purpose |
 |---|---|

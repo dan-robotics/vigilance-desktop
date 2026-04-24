@@ -18,6 +18,18 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Mutex, atomic::{AtomicBool, Ordering}};
 use std::time::{Instant, Duration};
 
+// Per-IP fingerprint accumulated from mDNS, DHCP, SSDP, and TCP SYN packets.
+#[derive(Debug, Clone, Default)]
+struct DeviceFingerprint {
+    mdns_name:        Option<String>,   // friendly name from mDNS PTR/A record
+    mdns_services:    Vec<String>,      // _airplay._tcp, _ssh._tcp, _googlecast._tcp …
+    apple_model:      Option<String>,   // from mDNS TXT model= / am= key
+    dhcp_hostname:    Option<String>,   // DHCP option 12
+    dhcp_vendor:      Option<String>,   // DHCP option 60 (vendor class identifier)
+    ssdp_device_type: Option<String>,   // UPnP/SSDP device type (friendly label)
+    tcp_os:           Option<String>,   // OS inferred from TCP SYN options
+}
+
 lazy_static::lazy_static! {
     static ref SHOULD_RUN: AtomicBool = AtomicBool::new(true);
     static ref HEURISTICS_ENABLED: AtomicBool = AtomicBool::new(true);
@@ -25,13 +37,11 @@ lazy_static::lazy_static! {
     static ref PORT_MAP: Mutex<HashMap<u16, (u32, String)>> = Mutex::new(HashMap::new());
     static ref GEO_CACHE: Mutex<HashMap<String, GeoInfo>> = Mutex::new(HashMap::new());
     static ref GEO_IN_FLIGHT: Mutex<HashSet<String>> = Mutex::new(HashSet::new());
-    // IPs that couldn't be resolved this session — skip retrying until next launch
     static ref GEO_FAILED: Mutex<HashSet<String>> = Mutex::new(HashSet::new());
     static ref HOSTNAME_CACHE: Mutex<HashMap<String, String>> = Mutex::new(HashMap::new());
     static ref HOSTNAME_IN_FLIGHT: Mutex<HashSet<String>> = Mutex::new(HashSet::new());
-    // Stable LAN device classification: classify once per IP, don't re-run on every packet.
-    // This prevents OS guess from flipping as TCP window size fluctuates.
     static ref LAN_DEVICE_CACHE: Mutex<HashMap<String, GeoInfo>> = Mutex::new(HashMap::new());
+    static ref DEVICE_FINGERPRINT: Mutex<HashMap<String, DeviceFingerprint>> = Mutex::new(HashMap::new());
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -265,6 +275,24 @@ fn infer_os(ttl: u8, tcp_window: u16, manufacturer: &str) -> Option<&'static str
     }
 }
 
+/// Normalize a process name that was truncated by macOS MAXCOMLEN (16 chars) or contains
+/// bundle-ID prefixes, mapping it to a clean human-readable form.
+fn normalize_proc_name(name: &str) -> String {
+    if name.starts_with("Google Chrome")  { return "Google Chrome".to_string(); }
+    if name.starts_with("firefox") || name.starts_with("Firefox") { return "Firefox".to_string(); }
+    if name.starts_with("Microsoft Outlo") { return "Microsoft Outlook".to_string(); }
+    if name.starts_with("Microsoft Wor")   { return "Microsoft Word".to_string(); }
+    if name.starts_with("Microsoft Exc")   { return "Microsoft Excel".to_string(); }
+    if name.starts_with("Microsoft Pow")   { return "Microsoft PowerPoint".to_string(); }
+    if name.starts_with("Microsoft Tea")   { return "Microsoft Teams".to_string(); }
+    if name.starts_with("com.apple.Safari")  { return "Safari".to_string(); }
+    if name.starts_with("com.apple.WebKit") { return "Safari (WebKit)".to_string(); }
+    if name.starts_with("com.apple.")  { return name.trim_start_matches("com.apple.").to_string(); }
+    if name.starts_with("com.microsoft.") { return name.trim_start_matches("com.microsoft.").to_string(); }
+    if name.starts_with("com.google.")  { return name.trim_start_matches("com.google.").to_string(); }
+    name.to_string()
+}
+
 /// Guess a human-readable process/service name from a resolved hostname.
 /// Used when packet-level port→PID lookup fails (e.g. root daemons invisible to lsof without sudo).
 fn guess_process_from_hostname(hostname: &str) -> Option<&'static str> {
@@ -324,6 +352,545 @@ fn guess_process_from_hostname(hostname: &str) -> Option<&'static str> {
     None
 }
 
+/// Refine the generic "nsurlsessiond" label using the remote hostname.
+/// nsurlsessiond is macOS's NSURLSession proxy — it owns the socket for every Apple app
+/// (TV, App Store, Safari, iCloud, etc.), so we use the CDN hostname to infer which service.
+fn refine_nsurlsessiond_label(hostname: &str) -> Option<&'static str> {
+    let h = hostname.to_lowercase();
+    if h.contains("video") || h.contains("stream") || h.contains("media")
+        || h.ends_with(".cdn-apple.com") || h.ends_with(".aaplimg.com")
+    {
+        return Some("Apple TV (Stream)");
+    }
+    if h.ends_with(".icloud.com") || h.contains("icloud") { return Some("iCloud"); }
+    if h.ends_with(".itunes.apple.com") || h.contains("itunes") || h.contains("appstore") || h.contains("app-store") {
+        return Some("App Store");
+    }
+    if h.ends_with(".apple.com") || h.ends_with(".mzstatic.com") { return Some("Apple Services"); }
+    None
+}
+
+// ─── Device Fingerprinting ────────────────────────────────────────────────────
+
+fn dns_read_name(data: &[u8], start: usize) -> (String, usize) {
+    let mut labels: Vec<String> = Vec::new();
+    let mut pos = start;
+    let mut jumped = false;
+    let mut end_pos = start;
+    let mut safety = 0usize;
+    while pos < data.len() && safety < 128 {
+        safety += 1;
+        let b = data[pos] as usize;
+        if b == 0 { if !jumped { end_pos = pos + 1; } break; }
+        if b & 0xC0 == 0xC0 {
+            if pos + 1 >= data.len() { break; }
+            if !jumped { end_pos = pos + 2; }
+            jumped = true;
+            pos = ((b & 0x3F) << 8) | data[pos + 1] as usize;
+            continue;
+        }
+        let len = b; pos += 1;
+        if pos + len > data.len() { break; }
+        if let Ok(s) = std::str::from_utf8(&data[pos..pos + len]) { labels.push(s.to_string()); }
+        pos += len;
+        if !jumped { end_pos = pos; }
+    }
+    (labels.join("."), end_pos)
+}
+
+fn apple_model_label(model: &str) -> &'static str {
+    let m = model.to_lowercase();
+    if m.starts_with("macbookpro")   { return "MacBook Pro"; }
+    if m.starts_with("macbookair")   { return "MacBook Air"; }
+    if m.starts_with("macbook")      { return "MacBook"; }
+    if m.starts_with("macpro")       { return "Mac Pro"; }
+    if m.starts_with("macmini")      { return "Mac Mini"; }
+    if m.starts_with("imac")         { return "iMac"; }
+    if m.starts_with("mac14") || m.starts_with("mac15") { return "Mac (Apple Silicon)"; }
+    if m.starts_with("iphone")       { return "iPhone"; }
+    if m.starts_with("ipad")         { return "iPad"; }
+    if m.starts_with("appletv")      { return "Apple TV"; }
+    if m.starts_with("audioaccessory") || m.starts_with("homepod") { return "HomePod"; }
+    if m.starts_with("watch")        { return "Apple Watch"; }
+    "Apple Device"
+}
+
+fn mdns_services_to_device(services: &[String]) -> Option<String> {
+    for svc in services {
+        if svc.contains("_appletv")        { return Some("Apple TV".to_string()); }
+        if svc.contains("_googlecast")     { return Some("Chromecast / Google TV".to_string()); }
+        if svc.contains("_raop")           { return Some("AirPlay Audio Speaker".to_string()); }
+        if svc.contains("_airplay")        { return Some("AirPlay Device".to_string()); }
+        if svc.contains("_sonos") || svc.contains("_rincon") { return Some("Sonos Speaker".to_string()); }
+        if svc.contains("_hap")            { return Some("HomeKit Accessory".to_string()); }
+        if svc.contains("_rdlink")         { return Some("Apple Watch".to_string()); }
+        if svc.contains("_printer") || svc.contains("_ipp") || svc.contains("_pdl-datastream") {
+            return Some("Network Printer".to_string());
+        }
+        if svc.contains("_smb") || svc.contains("_afpovertcp") { return Some("File Server".to_string()); }
+        if svc.contains("_ssh")            { return Some("SSH Server".to_string()); }
+        if svc.contains("_companion-link") || svc.contains("_sleep-proxy") {
+            return Some("Apple Device".to_string());
+        }
+    }
+    None
+}
+
+fn mdns_services_to_os(services: &[String]) -> Option<String> {
+    for svc in services {
+        if svc.contains("_companion-link") || svc.contains("_airplay") || svc.contains("_raop")
+            || svc.contains("_appletv") || svc.contains("_rdlink") || svc.contains("_sleep-proxy")
+        { return Some("Apple OS".to_string()); }
+        if svc.contains("_googlecast")  { return Some("Android / ChromeOS".to_string()); }
+        if svc.contains("_ssh") || svc.contains("_workstation") { return Some("Linux".to_string()); }
+    }
+    None
+}
+
+fn vendor_to_os(vendor: &str) -> Option<&'static str> {
+    let v = vendor.to_lowercase();
+    if v.contains("android")                        { return Some("Android"); }
+    if v.contains("iphone os") || v.contains("ios") { return Some("iOS"); }
+    if v.contains("ipados")                         { return Some("iPadOS"); }
+    if v.contains("mac os") || v.contains("macos")  { return Some("macOS"); }
+    if v.contains("windows") || v.contains("msft")  { return Some("Windows"); }
+    if v.contains("linux")                          { return Some("Linux"); }
+    None
+}
+
+fn vendor_to_device(vendor: &str) -> Option<&'static str> {
+    let v = vendor.to_lowercase();
+    if v.contains("iphone")  { return Some("iPhone"); }
+    if v.contains("ipad")    { return Some("iPad"); }
+    if v.contains("android") { return Some("Android Device"); }
+    if v.contains("windows") { return Some("Windows PC"); }
+    None
+}
+
+fn ssdp_device_label(urn: &str) -> &'static str {
+    let u = urn.to_lowercase();
+    if u.contains("mediarenderer")         { return "Media Renderer (DLNA)"; }
+    if u.contains("mediaserver")           { return "Media Server (DLNA)"; }
+    if u.contains("internetgatewaydevice") || u.contains("gatewaydevice") {
+        return "Internet Gateway / Router";
+    }
+    if u.contains("wandevice") || u.contains("wanconnection") { return "WAN Device (Router)"; }
+    if u.contains("printer")               { return "Network Printer"; }
+    if u.contains("scanner")              { return "Network Scanner"; }
+    if u.contains("tvdevice") || u.contains(":tv:") { return "Smart TV"; }
+    if u.contains("zoneplayer") || u.contains("speakergroup") { return "Sonos Speaker"; }
+    if u.contains("player")               { return "Media Player"; }
+    if u.contains("camera")              { return "IP Camera"; }
+    "UPnP Device"
+}
+
+/// Infer OS from TCP SYN option pattern (MSS, Window Scale, SACK, Timestamps).
+fn tcp_syn_os(options: &[u8]) -> Option<&'static str> {
+    let mut has_mss  = false;
+    let mut has_ws   = false;
+    let mut ws_val: u8 = 0;
+    let mut has_sack = false;
+    let mut has_ts   = false;
+    let mut pos = 0;
+    while pos < options.len() {
+        let kind = options[pos];
+        match kind {
+            0 => break,
+            1 => { pos += 1; continue; }
+            _ => {
+                if pos + 1 >= options.len() { break; }
+                let len = options[pos + 1] as usize;
+                if len < 2 || pos + len > options.len() { break; }
+                match kind {
+                    2 => { has_mss = true; }
+                    3 => { has_ws = true; if len >= 3 { ws_val = options[pos + 2]; } }
+                    4 => { has_sack = true; }
+                    8 => { has_ts = true; }
+                    _ => {}
+                }
+                pos += len;
+            }
+        }
+    }
+    if !has_mss { return None; }
+    if has_ts && has_sack && has_ws && (ws_val == 6 || ws_val == 8) { return Some("macOS / iOS"); }
+    if has_ts && has_sack && has_ws && (ws_val == 7 || ws_val == 9 || ws_val == 10) { return Some("Linux"); }
+    if !has_ts && has_sack && has_ws { return Some("Windows"); }
+    if has_sack && has_ts { return Some("Linux / macOS"); }
+    None
+}
+
+fn extract_mdns(src_ip: &str, payload: &[u8]) {
+    if payload.len() < 12 || !is_local_ip(src_ip) { return; }
+    let qdcount = u16::from_be_bytes([payload[4], payload[5]]) as usize;
+    let ancount = u16::from_be_bytes([payload[6], payload[7]]) as usize;
+    let nscount = u16::from_be_bytes([payload[8], payload[9]]) as usize;
+    let arcount = u16::from_be_bytes([payload[10], payload[11]]) as usize;
+    let mut pos = 12;
+    for _ in 0..qdcount {
+        let (_, end) = dns_read_name(payload, pos); pos = end;
+        if pos + 4 > payload.len() { return; }
+        pos += 4;
+    }
+    let mut new_services: Vec<String> = Vec::new();
+    let mut new_model:    Option<String> = None;
+    let mut new_name:     Option<String> = None;
+    for _ in 0..(ancount + nscount + arcount) {
+        if pos + 11 > payload.len() { break; }
+        let (rr_name, name_end) = dns_read_name(payload, pos);
+        pos = name_end;
+        if pos + 10 > payload.len() { break; }
+        let rtype = u16::from_be_bytes([payload[pos], payload[pos + 1]]);
+        pos += 8; // TYPE(2) + CLASS(2) + TTL(4)
+        if pos + 2 > payload.len() { break; }
+        let rdlen = u16::from_be_bytes([payload[pos], payload[pos + 1]]) as usize;
+        pos += 2;
+        if pos + rdlen > payload.len() { break; }
+        let rdata = &payload[pos..pos + rdlen];
+        match rtype {
+            12 => { // PTR: rr_name = service type, rdata = instance name
+                if rr_name.starts_with('_') {
+                    let svc = rr_name.trim_end_matches(".local").to_string();
+                    if (svc.contains("._tcp") || svc.contains("._udp")) && !new_services.contains(&svc) {
+                        new_services.push(svc);
+                    }
+                }
+                let (instance, _) = dns_read_name(rdata, 0);
+                if let Some(friendly) = instance.split("._").next() {
+                    if !friendly.is_empty() && new_name.is_none() {
+                        new_name = Some(friendly.to_string());
+                    }
+                }
+            }
+            16 => { // TXT: parse key=value pairs
+                let mut tp = 0;
+                while tp < rdata.len() {
+                    let slen = rdata[tp] as usize; tp += 1;
+                    if tp + slen > rdata.len() { break; }
+                    if let Ok(s) = std::str::from_utf8(&rdata[tp..tp + slen]) {
+                        for prefix in &["model=", "md=", "am="] {
+                            if let Some(val) = s.strip_prefix(prefix) {
+                                if !val.is_empty() && new_model.is_none() {
+                                    new_model = Some(val.to_string());
+                                }
+                            }
+                        }
+                        if let Some(val) = s.strip_prefix("fn=") {
+                            if !val.is_empty() && new_name.is_none() { new_name = Some(val.to_string()); }
+                        }
+                    }
+                    tp += slen;
+                }
+            }
+            1 | 28 => { // A / AAAA: rr_name is the device hostname
+                let hostname = rr_name.trim_end_matches(".local").to_string();
+                if !hostname.is_empty() && !hostname.starts_with('_') && new_name.is_none() {
+                    new_name = Some(hostname);
+                }
+            }
+            _ => {}
+        }
+        pos += rdlen;
+    }
+    if new_services.is_empty() && new_model.is_none() && new_name.is_none() { return; }
+    {
+        let mut fp = DEVICE_FINGERPRINT.lock().unwrap();
+        let e = fp.entry(src_ip.to_string()).or_default();
+        for svc in new_services { if !e.mdns_services.contains(&svc) { e.mdns_services.push(svc); } }
+        if new_model.is_some() && e.apple_model.is_none() { e.apple_model = new_model; }
+        if new_name.is_some()  && e.mdns_name.is_none()   { e.mdns_name  = new_name; }
+    }
+    LAN_DEVICE_CACHE.lock().unwrap().remove(src_ip);
+}
+
+fn extract_dhcp(src_ip: &str, payload: &[u8]) {
+    if payload.len() < 240 || src_ip == "0.0.0.0" { return; }
+    if payload[236..240] != [99, 130, 83, 99] { return; }
+    let mut pos = 240;
+    let mut hostname: Option<String> = None;
+    let mut vendor:   Option<String> = None;
+    while pos < payload.len() {
+        let code = payload[pos]; pos += 1;
+        if code == 255 { break; }
+        if code == 0   { continue; }
+        if pos >= payload.len() { break; }
+        let len = payload[pos] as usize; pos += 1;
+        if pos + len > payload.len() { break; }
+        let data = &payload[pos..pos + len];
+        match code {
+            12 => { if let Ok(s) = std::str::from_utf8(data) { let s = s.trim_end_matches('\0'); if !s.is_empty() { hostname = Some(s.to_string()); } } }
+            60 => { if let Ok(s) = std::str::from_utf8(data) { let s = s.trim_end_matches('\0'); if !s.is_empty() { vendor   = Some(s.to_string()); } } }
+            _ => {}
+        }
+        pos += len;
+    }
+    if hostname.is_none() && vendor.is_none() { return; }
+    {
+        let mut fp = DEVICE_FINGERPRINT.lock().unwrap();
+        let e = fp.entry(src_ip.to_string()).or_default();
+        if hostname.is_some() && e.dhcp_hostname.is_none() { e.dhcp_hostname = hostname; }
+        if vendor.is_some()   && e.dhcp_vendor.is_none()   { e.dhcp_vendor   = vendor; }
+    }
+    LAN_DEVICE_CACHE.lock().unwrap().remove(src_ip);
+}
+
+fn extract_ssdp(src_ip: &str, payload: &[u8]) {
+    if !is_local_ip(src_ip) { return; }
+    let text = match std::str::from_utf8(payload) { Ok(t) => t, Err(_) => return };
+    if !text.starts_with("NOTIFY") && !text.starts_with("HTTP/1") { return; }
+    for line in text.lines() {
+        let lower = line.to_lowercase();
+        if lower.starts_with("nt:") || lower.starts_with("st:") {
+            let val = line.splitn(2, ':').nth(1).unwrap_or("").trim();
+            if val.starts_with("urn:") {
+                let label = ssdp_device_label(val).to_string();
+                {
+                    let mut fp = DEVICE_FINGERPRINT.lock().unwrap();
+                    let e = fp.entry(src_ip.to_string()).or_default();
+                    if e.ssdp_device_type.is_some() { return; }
+                    e.ssdp_device_type = Some(label);
+                }
+                LAN_DEVICE_CACHE.lock().unwrap().remove(src_ip);
+                return;
+            }
+        }
+    }
+}
+
+fn fingerprint_device(fp: &DeviceFingerprint, manufacturer: &str) -> (Option<String>, Option<String>) {
+    if let Some(ref model) = fp.apple_model {
+        let label = apple_model_label(model);
+        let os = match label {
+            "iPhone"      => "iOS",
+            "iPad"        => "iPadOS",
+            "Apple Watch" => "watchOS",
+            "Apple TV"    => "tvOS",
+            "HomePod"     => "audioOS",
+            _             => "macOS",
+        };
+        return (Some(label.to_string()), Some(os.to_string()));
+    }
+    let mut device: Option<String> = None;
+    let mut os:     Option<String> = None;
+    if device.is_none() { device = mdns_services_to_device(&fp.mdns_services); }
+    if os.is_none()     { os     = mdns_services_to_os(&fp.mdns_services); }
+    if let Some(ref v) = fp.dhcp_vendor {
+        if device.is_none() { device = vendor_to_device(v).map(|s| s.to_string()); }
+        if os.is_none()     { os     = vendor_to_os(v).map(|s| s.to_string()); }
+    }
+    if device.is_none() {
+        if let Some(ref dt) = fp.ssdp_device_type { device = Some(dt.clone()); }
+    }
+    if os.is_none() {
+        if let Some(ref t) = fp.tcp_os { os = Some(t.clone()); }
+    }
+    let mfr = manufacturer.to_lowercase();
+    if device.is_none() {
+        if mfr.contains("apple")      { device = Some("Apple Device".to_string()); }
+        else if mfr.contains("google")    { device = Some("Google Device".to_string()); }
+        else if mfr.contains("amazon")    { device = Some("Amazon Device".to_string()); }
+        else if mfr.contains("raspberry") { device = Some("Raspberry Pi".to_string()); }
+        else if mfr.contains("samsung")   { device = Some("Samsung Device".to_string()); }
+    }
+    if os.is_none() {
+        if mfr.contains("apple")      { os = Some("macOS / iOS".to_string()); }
+        else if mfr.contains("amazon")    { os = Some("Fire OS / Linux".to_string()); }
+        else if mfr.contains("raspberry") { os = Some("Linux".to_string()); }
+    }
+    (device, os)
+}
+
+// ─── TLS SNI + DNS Response ───────────────────────────────────────────────────
+
+/// Extract the SNI hostname from a TLS ClientHello TCP payload.
+fn extract_tls_sni(payload: &[u8]) -> Option<String> {
+    if payload.len() < 5 { return None; }
+    if payload[0] != 0x16 || payload[1] != 0x03 { return None; } // TLS Handshake record
+    let record_len = u16::from_be_bytes([payload[3], payload[4]]) as usize;
+    if payload.len() < 5 + record_len { return None; }
+    let hs = &payload[5..5 + record_len];
+    if hs.len() < 4 || hs[0] != 0x01 { return None; } // must be ClientHello
+    let hs_len = ((hs[1] as usize) << 16) | ((hs[2] as usize) << 8) | hs[3] as usize;
+    if hs.len() < 4 + hs_len { return None; }
+    let hello = &hs[4..4 + hs_len];
+    if hello.len() < 35 { return None; }
+    let mut pos = 34; // skip ProtocolVersion(2) + Random(32)
+    if pos >= hello.len() { return None; }
+    let sid_len = hello[pos] as usize; pos += 1;
+    if pos + sid_len > hello.len() { return None; }
+    pos += sid_len;
+    if pos + 2 > hello.len() { return None; }
+    let cs_len = u16::from_be_bytes([hello[pos], hello[pos + 1]]) as usize; pos += 2;
+    if pos + cs_len > hello.len() { return None; }
+    pos += cs_len;
+    if pos >= hello.len() { return None; }
+    let cm_len = hello[pos] as usize; pos += 1;
+    if pos + cm_len > hello.len() { return None; }
+    pos += cm_len;
+    if pos + 2 > hello.len() { return None; }
+    let ext_len = u16::from_be_bytes([hello[pos], hello[pos + 1]]) as usize; pos += 2;
+    let ext_end = pos + ext_len;
+    while pos + 4 <= ext_end && pos + 4 <= hello.len() {
+        let ext_type     = u16::from_be_bytes([hello[pos], hello[pos + 1]]);
+        let ext_data_len = u16::from_be_bytes([hello[pos + 2], hello[pos + 3]]) as usize;
+        pos += 4;
+        if pos + ext_data_len > hello.len() { break; }
+        if ext_type == 0x0000 { // SNI extension
+            let sni = &hello[pos..pos + ext_data_len];
+            // server_name_list_len(2) + name_type(1=host_name) + name_len(2) + name
+            if sni.len() < 5 || sni[2] != 0x00 { break; }
+            let name_len = u16::from_be_bytes([sni[3], sni[4]]) as usize;
+            if sni.len() < 5 + name_len { break; }
+            if let Ok(name) = std::str::from_utf8(&sni[5..5 + name_len]) {
+                return Some(name.to_string());
+            }
+        }
+        pos += ext_data_len;
+    }
+    None
+}
+
+/// Store an IP→hostname mapping derived from DNS/SNI (without reverse DNS).
+/// Skips if the IP is already known. Evicts LAN device cache so city refreshes.
+fn populate_hostname_from_dns(ip: &str, hostname: &str) {
+    if hostname.is_empty() || ip == "0.0.0.0" || ip == "::" { return; }
+    {
+        let mut cache = HOSTNAME_CACHE.lock().unwrap();
+        if cache.contains_key(ip) { return; }
+        cache.insert(ip.to_string(), hostname.to_string());
+    }
+    if is_local_ip(ip) {
+        LAN_DEVICE_CACHE.lock().unwrap().remove(ip);
+    }
+}
+
+/// Parse a DNS response and populate HOSTNAME_CACHE with A/AAAA answer records.
+fn extract_dns_response(payload: &[u8]) {
+    if payload.len() < 12 { return; }
+    let flags = u16::from_be_bytes([payload[2], payload[3]]);
+    if flags & 0x8000 == 0 { return; } // not a response
+    if flags & 0x000F != 0 { return; } // RCODE != NOERROR
+    let qdcount = u16::from_be_bytes([payload[4], payload[5]]) as usize;
+    let ancount = u16::from_be_bytes([payload[6], payload[7]]) as usize;
+    if ancount == 0 { return; }
+    let mut pos = 12;
+    // Capture the original queried name — use it for all answer IPs (handles CNAME chains)
+    let mut queried = String::new();
+    for i in 0..qdcount {
+        let (name, end) = dns_read_name(payload, pos); pos = end;
+        if i == 0 { queried = name.trim_end_matches('.').to_string(); }
+        if pos + 4 > payload.len() { return; }
+        pos += 4;
+    }
+    for _ in 0..ancount {
+        if pos + 11 > payload.len() { break; }
+        let (ans_name, name_end) = dns_read_name(payload, pos); pos = name_end;
+        if pos + 10 > payload.len() { break; }
+        let rtype = u16::from_be_bytes([payload[pos], payload[pos + 1]]);
+        pos += 8; // TYPE(2) + CLASS(2) + TTL(4)
+        if pos + 2 > payload.len() { break; }
+        let rdlen = u16::from_be_bytes([payload[pos], payload[pos + 1]]) as usize; pos += 2;
+        if pos + rdlen > payload.len() { break; }
+        let rdata = &payload[pos..pos + rdlen];
+        // Prefer original queried name (e.g. "slack.com") over CNAME target for attribution
+        let label = if !queried.is_empty() {
+            queried.as_str()
+        } else {
+            ans_name.trim_end_matches('.')
+        };
+        match rtype {
+            1 if rdlen == 4 => {
+                let ip = format!("{}.{}.{}.{}", rdata[0], rdata[1], rdata[2], rdata[3]);
+                populate_hostname_from_dns(&ip, label);
+            }
+            28 if rdlen == 16 => {
+                if let Ok(arr) = <[u8; 16]>::try_from(rdata) {
+                    let ip = std::net::Ipv6Addr::from(arr).to_string();
+                    populate_hostname_from_dns(&ip, label);
+                }
+            }
+            _ => {}
+        }
+        pos += rdlen;
+    }
+}
+
+fn fingerprint_packet(raw: &[u8]) {
+    let eth = match EthernetPacket::new(raw) { Some(e) => e, None => return };
+    let ethertype = eth.get_ethertype();
+    if ethertype == EtherTypes::Ipv4 {
+        let ipv4 = match Ipv4Packet::new(eth.payload()) { Some(p) => p, None => return };
+        let src = ipv4.get_source().to_string();
+        let dst = ipv4.get_destination().to_string();
+        match ipv4.get_next_level_protocol() {
+            IpNextHeaderProtocols::Tcp => {
+                let tcp = match TcpPacket::new(ipv4.payload()) { Some(p) => p, None => return };
+                if is_local_ip(&src) {
+                    // SYN (no ACK): OS fingerprinting for LAN devices
+                    if tcp.get_flags() & 0x002 != 0 && tcp.get_flags() & 0x010 == 0 {
+                        let data_off = tcp.get_data_offset() as usize * 4;
+                        let raw_tcp = tcp.packet();
+                        let opts = if data_off > 20 && data_off <= raw_tcp.len() { &raw_tcp[20..data_off] } else { &[] };
+                        if let Some(os) = tcp_syn_os(opts) {
+                            let mut fp = DEVICE_FINGERPRINT.lock().unwrap();
+                            fp.entry(src).or_default().tcp_os = Some(os.to_string());
+                        }
+                    }
+                    // TLS ClientHello: SNI → hostname mapping for remote IP
+                    if !is_local_ip(&dst) {
+                        if let Some(sni) = extract_tls_sni(tcp.payload()) {
+                            populate_hostname_from_dns(&dst, &sni);
+                        }
+                    }
+                }
+            }
+            IpNextHeaderProtocols::Udp => {
+                let udp = match UdpPacket::new(ipv4.payload()) { Some(p) => p, None => return };
+                let (sport, dport) = (udp.get_source(), udp.get_destination());
+                if sport == 5353 || dport == 5353      { extract_mdns(&src, udp.payload()); }
+                else if sport == 68 || dport == 67     { extract_dhcp(&src, udp.payload()); }
+                else if sport == 1900 || dport == 1900 { extract_ssdp(&src, udp.payload()); }
+                else if sport == 53  || dport == 53    { extract_dns_response(udp.payload()); }
+            }
+            _ => {}
+        }
+    } else if ethertype == EtherTypes::Ipv6 {
+        let ipv6 = match Ipv6Packet::new(eth.payload()) { Some(p) => p, None => return };
+        let src = ipv6.get_source().to_string();
+        let dst = ipv6.get_destination().to_string();
+        match ipv6.get_next_header() {
+            IpNextHeaderProtocols::Tcp => {
+                let tcp = match TcpPacket::new(ipv6.payload()) { Some(p) => p, None => return };
+                if is_local_ip(&src) {
+                    if tcp.get_flags() & 0x002 != 0 && tcp.get_flags() & 0x010 == 0 {
+                        let data_off = tcp.get_data_offset() as usize * 4;
+                        let raw_tcp = tcp.packet();
+                        let opts = if data_off > 20 && data_off <= raw_tcp.len() { &raw_tcp[20..data_off] } else { &[] };
+                        if let Some(os) = tcp_syn_os(opts) {
+                            let mut fp = DEVICE_FINGERPRINT.lock().unwrap();
+                            fp.entry(src).or_default().tcp_os = Some(os.to_string());
+                        }
+                    }
+                    if !is_local_ip(&dst) {
+                        if let Some(sni) = extract_tls_sni(tcp.payload()) {
+                            populate_hostname_from_dns(&dst, &sni);
+                        }
+                    }
+                }
+            }
+            IpNextHeaderProtocols::Udp => {
+                let udp = match UdpPacket::new(ipv6.payload()) { Some(p) => p, None => return };
+                let (sport, dport) = (udp.get_source(), udp.get_destination());
+                if sport == 5353 || dport == 5353      { extract_mdns(&src, udp.payload()); }
+                else if sport == 68 || dport == 67     { extract_dhcp(&src, udp.payload()); }
+                else if sport == 1900 || dport == 1900 { extract_ssdp(&src, udp.payload()); }
+                else if sport == 53  || dport == 53    { extract_dns_response(udp.payload()); }
+            }
+            _ => {}
+        }
+    }
+}
+
 /// Extract MAC bytes from an EUI-64 IPv6 link-local address (fe80::/10).
 /// EUI-64 embeds the MAC as: [3 bytes] ff:fe [3 bytes], with bit 6 of byte 0 flipped.
 fn mac_from_eui64(ipv6: &str) -> Option<Vec<u8>> {
@@ -366,10 +933,9 @@ fn classify_local_ip(
     port: u16,
     force_refresh: bool,
 ) -> GeoInfo {
-    // Return cached result unless we need to refresh (e.g. hostname just resolved)
+    // Return cached result unless we need to refresh
     if !force_refresh {
         if let Some(cached) = LAN_DEVICE_CACHE.lock().unwrap().get(ip).cloned() {
-            // Always refresh the service hint from the port (may be new port)
             let mut c = cached;
             if let Some(svc) = local_port_service(port) {
                 let svc_tag = format!(" · {}", svc);
@@ -381,7 +947,7 @@ fn classify_local_ip(
         }
     }
 
-    // Try MAC from the packet first; for IPv6 EUI-64, extract from the address.
+    // Parse MAC bytes
     let mac_bytes: Vec<u8> = if !mac.is_empty() {
         mac.split(':')
             .filter_map(|h| u8::from_str_radix(h, 16).ok())
@@ -392,7 +958,8 @@ fn classify_local_ip(
         vec![]
     };
 
-    let manufacturer = if !mac_bytes.is_empty() {
+    // Initial manufacturer guess
+    let mut manufacturer = if !mac_bytes.is_empty() {
         match lookup_oui(&mac_bytes) {
             Some(label) => label.to_string(),
             None => "Randomized MAC (Privacy Mode)".to_string(),
@@ -400,6 +967,23 @@ fn classify_local_ip(
     } else {
         "Unknown".to_string()
     };
+
+    let fp_data = DEVICE_FINGERPRINT.lock().unwrap().get(ip).cloned();
+    
+    // Apply the fallback logic
+    if manufacturer == "Unknown" || manufacturer.contains("Randomized") {
+        if let Some(ref fp) = fp_data {
+            if let Some(ref vendor) = fp.dhcp_vendor {
+                manufacturer = vendor.clone();
+            } else if !fp.mdns_services.is_empty() {
+                if let Some(os_hint) = mdns_services_to_os(&fp.mdns_services) {
+                    manufacturer = format!("{} (via mDNS)", os_hint);
+                } else if let Some(dev_hint) = mdns_services_to_device(&fp.mdns_services) {
+                    manufacturer = format!("{} (via mDNS)", dev_hint);
+                }
+            }
+        }
+    } // <--- This was the bracket likely missing or misplaced
 
     let hostname = HOSTNAME_CACHE.lock().unwrap().get(ip).cloned()
         .unwrap_or_default();
@@ -417,11 +1001,22 @@ fn classify_local_ip(
         manufacturer.clone()
     };
 
-    let os_guess = infer_os(ttl, tcp_window, &effective_mfr)
-        .map(|s| s.to_string())
-        .unwrap_or_else(|| "Unknown OS".to_string());
+    // Fingerprint-based enrichment (mDNS, DHCP, SSDP, TCP SYN)
+    let fp_data = DEVICE_FINGERPRINT.lock().unwrap().get(ip).cloned();
+    let (fp_device, fp_os) = if let Some(ref fp) = fp_data {
+        fingerprint_device(fp, &manufacturer)
+    } else {
+        (None, None)
+    };
 
-    let service = local_port_service(port)
+    // OS: fingerprint wins; fallback to TTL/window heuristic
+    let os_guess = fp_os.unwrap_or_else(|| {
+        infer_os(ttl, tcp_window, &effective_mfr)
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| "Unknown OS".to_string())
+    });
+
+    let service_tag = local_port_service(port)
         .map(|s| format!(" · {}", s))
         .unwrap_or_default();
 
@@ -431,11 +1026,18 @@ fn classify_local_ip(
         } else {
             "Gateway / Router".to_string()
         }
+    } else if let Some(ref dev) = fp_device {
+        format!("{}{}", dev, service_tag)
     } else {
-        format!("LAN Device{}", service)
+        format!("LAN Device{}", service_tag)
     };
 
-    let city = if hostname.is_empty() { ip.to_string() } else { hostname.clone() };
+    // Best name: mDNS friendly name > DHCP hostname > reverse DNS > raw IP
+    let city = fp_data.as_ref()
+        .and_then(|fp| fp.mdns_name.clone().or_else(|| fp.dhcp_hostname.clone()))
+        .or_else(|| if hostname.is_empty() { None } else { Some(hostname.clone()) })
+        .unwrap_or_else(|| ip.to_string());
+
     let result = GeoInfo {
         city,
         region: os_guess,
@@ -444,8 +1046,8 @@ fn classify_local_ip(
         org: device_role,
     };
 
-    // Cache unless hostname is still unknown (refresh when it resolves)
-    if !hostname.is_empty() || force_refresh {
+    // Cache when we have meaningful data (hostname, fingerprint, or forced refresh)
+    if !hostname.is_empty() || fp_data.is_some() || force_refresh {
         LAN_DEVICE_CACHE.lock().unwrap().insert(ip.to_string(), result.clone());
     }
     result
@@ -854,29 +1456,86 @@ pub fn start_active_probe(app: AppHandle) {
                 .output();
             #[cfg(target_os = "macos")]
             {
-                // First pass: unprivileged lsof (user-owned processes)
-                let outputs: Vec<std::process::Output> = [
-                    Command::new("lsof").args(["-i", "-P", "-n", "-sTCP:LISTEN,ESTABLISHED"]).output().ok(),
-                    // Second pass: sudo lsof — picks up root daemons (JumpCloud, MDM agents, etc.)
-                    // Silently skipped if passwordless sudo is not configured for lsof.
-                    Command::new("sudo").args(["-n", "lsof", "-i", "-P", "-n", "-sTCP:LISTEN,ESTABLISHED"]).output().ok(),
-                ].into_iter().flatten().collect();
-
-                for out in outputs {
-                    for line in String::from_utf8_lossy(&out.stdout).lines() {
+                // TCP: netstat -anvp tcp reads the kernel TCP table directly and sees apps
+                // that use Apple's Network.framework (TV, Prime Video, Photos, Fitness, etc.).
+                // lsof reads per-process file descriptors and misses Network.framework entirely.
+                // netstat format: proto recv-q send-q local-addr foreign-addr state ... NAME:PID
+                // Local address uses dots: "192.168.1.1.54321" or "[::1].8080"
+                for netstat_out in [
+                    Command::new("netstat").args(["-anvp", "tcp"]).output().ok(),
+                    Command::new("sudo").args(["-n", "netstat", "-anvp", "tcp"]).output().ok(),
+                ].into_iter().flatten() {
+                    for line in String::from_utf8_lossy(&netstat_out.stdout).lines() {
                         let parts: Vec<&str> = line.split_whitespace().collect();
-                        // lsof: COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME
-                        if parts.len() >= 9 && parts[0] != "COMMAND" {
-                            if let (Some(cmd), Some(pid_str), Some(name)) =
-                                (parts.get(0), parts.get(1), parts.get(8))
-                            {
-                                let local_part = name.split("->").next().unwrap_or(name);
-                                if let Some(port_str) = local_part.split(':').last() {
-                                    if let Ok(port) = port_str.parse::<u16>() {
-                                        if let Ok(pid_val) = pid_str.parse::<usize>() {
-                                            new_map.entry(port).or_insert((pid_val as u32, cmd.to_string()));
-                                        }
-                                    }
+                        if parts.len() < 5 { continue; }
+                        if !parts[0].starts_with("tcp") { continue; }
+                        let local_addr = parts[3];
+                        let port_str = local_addr.rsplit('.').next().unwrap_or("");
+                        let port = match port_str.parse::<u16>() {
+                            Ok(p) => p,
+                            Err(_) => continue,
+                        };
+                        // Process info: last token matching "NAME:PID".
+                        // macOS MAXCOMLEN=16 splits "Google Chrome Helper" across multiple
+                        // whitespace tokens → scan backward to reconstruct the full name.
+                        const NETSTAT_STOPS: &[&str] = &[
+                            "ESTABLISHED", "CLOSE_WAIT", "TIME_WAIT", "LISTEN",
+                            "SYN_SENT", "SYN_RECEIVED", "FIN_WAIT_1", "FIN_WAIT_2",
+                            "LAST_ACK", "CLOSED", "CLOSING", "BOUND",
+                        ];
+                        if let Some(tok_idx) = parts.iter().rposition(|p| {
+                            let mut it = p.rsplitn(2, ':');
+                            let pid_part = it.next().unwrap_or("");
+                            let name_part = it.next().unwrap_or("");
+                            !name_part.is_empty() && pid_part.parse::<u32>().is_ok()
+                        }) {
+                            let mut it = parts[tok_idx].rsplitn(2, ':');
+                            let pid_val: u32 = it.next().unwrap_or("0").parse().unwrap_or(0);
+                            let last_word = it.next().unwrap_or("").to_string();
+                            let mut prefix: Vec<&str> = Vec::new();
+                            let mut j = tok_idx;
+                            while j > 0 {
+                                j -= 1;
+                                let w = parts[j];
+                                if w.contains('.') || w.parse::<u64>().is_ok()
+                                    || NETSTAT_STOPS.contains(&w) || w.contains(':')
+                                { break; }
+                                prefix.push(w);
+                                if prefix.len() >= 4 { break; }
+                            }
+                            prefix.reverse();
+                            let raw = if prefix.is_empty() {
+                                last_word
+                            } else {
+                                format!("{} {}", prefix.join(" "), last_word)
+                            };
+                            let proc_name = normalize_proc_name(&raw);
+                            if pid_val > 0 && !proc_name.is_empty() {
+                                new_map.entry(port).or_insert((pid_val, proc_name));
+                            }
+                        }
+                    }
+                }
+
+                // UDP: lsof -F pcn sees QUIC/HTTP3 bound sockets (WhatsApp, Chrome, etc.).
+                // -F structured output avoids the 9-char COMMAND truncation of columnar format.
+                for lsof_out in [
+                    Command::new("lsof").args(["-i", "UDP", "-P", "-n", "-F", "pcn"]).output().ok(),
+                    Command::new("sudo").args(["-n", "lsof", "-i", "UDP", "-P", "-n", "-F", "pcn"]).output().ok(),
+                ].into_iter().flatten() {
+                    let mut cur_pid: u32 = 0;
+                    let mut cur_cmd = String::new();
+                    for line in String::from_utf8_lossy(&lsof_out.stdout).lines() {
+                        if let Some(rest) = line.strip_prefix('p') {
+                            cur_pid = rest.parse().unwrap_or(0);
+                        } else if let Some(rest) = line.strip_prefix('c') {
+                            cur_cmd = rest.to_string();
+                        } else if let Some(rest) = line.strip_prefix('n') {
+                            if cur_pid == 0 || cur_cmd.is_empty() { continue; }
+                            let local_part = rest.split("->").next().unwrap_or(rest);
+                            if let Some(port_str) = local_part.split(':').last() {
+                                if let Ok(port) = port_str.parse::<u16>() {
+                                    new_map.entry(port).or_insert((cur_pid, cur_cmd.clone()));
                                 }
                             }
                         }
@@ -1046,6 +1705,7 @@ pub fn start_active_probe(app: AppHandle) {
 
                 match rx.next() {
                     Ok(packet) => {
+                        fingerprint_packet(packet);
                         if let Some(eth_packet) = EthernetPacket::new(packet) {
                             // Dispatch by EtherType.
                         // IPv6 is mandatory: Apple TV, Netflix, YouTube all prefer IPv6 (QUIC/HTTP3).
@@ -1199,16 +1859,22 @@ pub fn start_active_probe(app: AppHandle) {
                                     let guard = PORT_MAP.lock().unwrap();
                                     let resolved = guard.get(&local_port).cloned();
                                     drop(guard);
-                                    resolved.unwrap_or_else(|| {
-                                        // PORT_MAP missed — root daemon (e.g. JumpCloud) invisible to lsof without sudo.
-                                        // Try to identify by resolved hostname of the remote IP.
+                                    let (pid, name) = resolved.unwrap_or_else(|| {
                                         let label = HOSTNAME_CACHE.lock().unwrap()
                                             .get(&remote_addr)
                                             .and_then(|h| guess_process_from_hostname(h))
                                             .map(|s| s.to_string())
                                             .unwrap_or_else(|| "Guardian Kernel".to_string());
                                         (0, label)
-                                    })
+                                    });
+                                    let name = if name == "nsurlsessiond" {
+                                        HOSTNAME_CACHE.lock().unwrap()
+                                            .get(&remote_addr)
+                                            .and_then(|h| refine_nsurlsessiond_label(h))
+                                            .map(|s| s.to_string())
+                                            .unwrap_or(name)
+                                    } else { name };
+                                    (pid, name)
                                 };
 
                                 NetworkEvent {
@@ -1234,7 +1900,13 @@ pub fn start_active_probe(app: AppHandle) {
                                 let port_hit = PORT_MAP.lock().unwrap().get(&local_port).cloned();
                                 if let Some((pid, name)) = port_hit {
                                     entry.pid = pid;
-                                    entry.process = name;
+                                    entry.process = if name == "nsurlsessiond" {
+                                        HOSTNAME_CACHE.lock().unwrap()
+                                            .get(&remote_addr)
+                                            .and_then(|h| refine_nsurlsessiond_label(h))
+                                            .map(|s| s.to_string())
+                                            .unwrap_or(name)
+                                    } else { name };
                                 } else if let Some(name) = HOSTNAME_CACHE.lock().unwrap()
                                     .get(&remote_addr)
                                     .and_then(|h| guess_process_from_hostname(h))
@@ -1302,6 +1974,7 @@ fn save_blocked_ips(ips: &[String]) {
 
 #[cfg(target_os = "macos")]
 fn apply_pf_rules(ips: &[String]) -> bool {
+    // 1. Flush rules if list is empty
     if ips.is_empty() {
         return Command::new("sudo")
             .args(["pfctl", "-a", "com.vigilance.desktop", "-F", "rules"])
@@ -1309,12 +1982,20 @@ fn apply_pf_rules(ips: &[String]) -> bool {
             .map(|o| o.status.success())
             .unwrap_or(false);
     }
+
     let rules: String = ips.iter()
         .map(|ip| format!("block out quick from any to {}\n", ip))
         .collect();
+
+    // 2. Save to disk (YOUR ORIGINAL LOGIC)
     if std::fs::write("/tmp/vigilance_desktop.pf", &rules).is_err() {
         return false;
     }
+
+    // 3. Enable PF and Load the file
+    // -E ensures the firewall is ON. If it's OFF, your file does nothing.
+    let _ = Command::new("sudo").arg("pfctl").arg("-E").output();
+
     Command::new("sudo")
         .args(["pfctl", "-a", "com.vigilance.desktop", "-f", "/tmp/vigilance_desktop.pf"])
         .output()

@@ -90,10 +90,10 @@ fn main() {
             // macOS: custom app menu with About dialog showing version + MIT license
             #[cfg(target_os = "macos")]
             {
-                use tauri::menu::{AboutMetadata, MenuBuilder, SubmenuBuilder};
+                use tauri::menu::{AboutMetadata, MenuBuilder, MenuItem, SubmenuBuilder};
                 let about = AboutMetadata {
                     name:      Some("Vigilance".into()),
-                    version:   Some("3.1.0".into()),
+                    version:   Some("3.2.0".into()),
                     copyright: Some("© 2026 Daniel Andries".into()),
                     license:   Some("MIT License\n\nCopyright © 2026 Daniel Andries\n\nPermission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the \"Software\"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.".into()),
                     authors:   Some(vec!["Daniel Andries".into()]),
@@ -110,8 +110,32 @@ fn main() {
                     .separator()
                     .quit()
                     .build()?;
-                let menu = MenuBuilder::new(app).item(&app_menu).build()?;
+                let feedback = MenuItem::with_id(app, "send-feedback", "Send Feedback", true, None::<&str>)?;
+                let bug      = MenuItem::with_id(app, "report-bug",    "Report a Bug",  true, None::<&str>)?;
+                let github   = MenuItem::with_id(app, "view-github",   "View on GitHub",true, None::<&str>)?;
+                let help_menu = SubmenuBuilder::new(app, "Help")
+                    .item(&feedback)
+                    .separator()
+                    .item(&bug)
+                    .item(&github)
+                    .build()?;
+                let menu = MenuBuilder::new(app).item(&app_menu).item(&help_menu).build()?;
                 app.set_menu(menu)?;
+
+                app.on_menu_event(|_app, event| {
+                    let url: &str = match event.id().as_ref() {
+                        "send-feedback" => "mailto:daniel.tehnical@gmail.com?subject=Vigilance%20Feedback",
+                        "report-bug"    => "https://github.com/dan-robotics/vigilance-desktop/issues/new",
+                        "view-github"   => "https://github.com/dan-robotics/vigilance-desktop",
+                        _ => return,
+                    };
+                    #[cfg(target_os = "macos")]
+                    { let _ = std::process::Command::new("open").arg(url).spawn(); }
+                    #[cfg(target_os = "windows")]
+                    { let _ = std::process::Command::new("cmd").args(["/c", "start", "", url]).spawn(); }
+                    #[cfg(target_os = "linux")]
+                    { let _ = std::process::Command::new("xdg-open").arg(url).spawn(); }
+                });
             }
 
             sniffer::start_active_probe(app.handle().clone());

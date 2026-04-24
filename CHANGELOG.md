@@ -1,6 +1,24 @@
 ## 📜 Changelog
 
-### 🚀 v3.1.0 — The Guardian Clarity Update (Stable)
+# Changelog
+
+### 🚀 [3.2.0] - Stable - 2026-04-24
+### Added
+- **TLS SNI Extraction:** Implemented manual handshake traversal to identify remote hostnames in encrypted streams.
+- **DNS Wire-format Parser:** Added `dns_read_name` with compression support to resolve hostnames instantly from network traffic.
+- **Supreme Fingerprinting Suite:**
+    - `extract_mdns`: PTR/TXT/A record parsing for Apple/Service discovery.
+    - `extract_dhcp`: Hostname and Vendor Class ID extraction.
+    - `extract_ssdp`: UPnP device type identification.
+    - `tcp_syn_os`: OS fingerprinting via TCP window scale and TTL analysis.
+- **IPv6 Privacy Fallback:** Implemented fingerprint-based identification for devices using randomized IPv6 addresses.
+- **Native UI Migration:** Replaced Tauri/WebView2 with `egui` to remove "Microsoft Edge Helper" dependencies.
+
+### Changed
+- **Guardian Engine:** Refined beaconing detection to use 10% jitter threshold logic.
+- **Firewall Logic:** Improved macOS `pfctl` reliability by ensuring anchor registration and `-E` flag activation.
+
+### 🚀 [v3.1.0] — The Guardian Clarity Update (Stable)
 
 #### AI — Cloud AI Setup & Notifications
 - **Gemini API key input in Settings**: A new "Gemini API Key" card in Settings lets you paste your key directly in the app — no need to open `config.json` manually. The field is pre-filled with the current key on startup. Saving applies immediately without a restart.
