@@ -59,9 +59,9 @@ The OUI vendor table now covers 25+ major manufacturers (Starlink, Google, Amazo
 
 ### Windows (Installer / Portable)
 | Method | Filename | SHA-256 Checksum |
-| :--- | :--- | :--- |
-| **MSI Installer** | `Vigilance_3.2.0_x64.msi` | `a4ab316fa5ca4254017b4e2...` |
-| **Portable ZIP** | `Vigilance-Portable-v3.2.0.zip` | `d18573cb6226346fcc5376e...` |
+| **EXE Installer** | `vigilance_3.2.0_x64-setup.exe` | `6552ADA0F2EB10ACFFEAE40B43BC30B42EB0BCC73830E4329607FA8E384D41E9` |
+| **MSI Installer** | `vigilance_3.2.0_x64_en-US.msi` | `A6BF43467AF12A15802592471D554FBC4FF33BACC6EA8EE2BB0484A53EDBE278` |
+| **Portable ZIP**  | `Vigilance-Portable-v3.2.0.zip` | `92BF465CACDC6E98C86868B55D30FA788C013E3445FE1FA2100ABD6F8C67FCBE` |
 
 ---
 
