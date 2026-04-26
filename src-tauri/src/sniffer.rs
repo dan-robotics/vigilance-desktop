@@ -1,4 +1,3 @@
-use dns_lookup;
 use pnet::datalink::{self, Channel::Ethernet};
 use pnet::packet::ethernet::{EthernetPacket, EtherTypes};
 use pnet::packet::ip::IpNextHeaderProtocols;
@@ -81,7 +80,7 @@ fn is_multicast_ip(ip: &str) -> bool {
     if let Ok(v4) = ip.parse::<std::net::Ipv4Addr>() {
         return v4.is_multicast();
     }
-    if let Ok(_) = ip.parse::<std::net::Ipv6Addr>() {
+    if ip.parse::<std::net::Ipv6Addr>().is_ok() {
         return ip.starts_with("ff");
     }
     false
@@ -642,7 +641,7 @@ fn extract_ssdp(src_ip: &str, payload: &[u8]) {
     for line in text.lines() {
         let lower = line.to_lowercase();
         if lower.starts_with("nt:") || lower.starts_with("st:") {
-            let val = line.splitn(2, ':').nth(1).unwrap_or("").trim();
+            let val = line.split_once(':').map(|x| x.1).unwrap_or("").trim();
             if val.starts_with("urn:") {
                 let label = ssdp_device_label(val).to_string();
                 {
@@ -1160,11 +1159,7 @@ fn calculate_risk_score(
         
         // Check if current interval is within 10% jitter of previous interval
         if prev_interval.as_millis() > 10000 {
-            let diff = if current_interval > prev_interval {
-                current_interval - prev_interval
-            } else {
-                prev_interval - current_interval
-            };
+            let diff = current_interval.abs_diff(prev_interval);
             
             let threshold = prev_interval.as_millis() / 10;
             if diff.as_millis() < threshold {
@@ -1391,8 +1386,7 @@ pub fn start_active_probe(app: AppHandle) {
                     let failed  = GEO_FAILED.lock().unwrap();
                     flight.iter()
                         .filter(|ip| !cache.contains_key(*ip) && !failed.contains(*ip))
-                        .cloned()
-                        .take(8) // max 8 concurrent per tick — friendly to free-tier rate limits
+                        .take(8).cloned() // max 8 concurrent per tick — friendly to free-tier rate limits
                         .collect()
                 };
 
@@ -1565,7 +1559,7 @@ pub fn start_active_probe(app: AppHandle) {
                     // netstat -ano: Protocol LocalAddr RemoteAddr State PID
                     if parts.len() >= 5 {
                         if let Some(local_addr) = parts.get(1) {
-                            if let Some(port_str) = local_addr.split(':').last() {
+                            if let Some(port_str) = local_addr.split(':').next_back() {
                                 if let Ok(port) = port_str.parse::<u16>() {
                                     if let Some(pid_str) = parts.get(4) {
                                         if let Ok(pid_val) = pid_str.parse::<usize>() {
@@ -2041,7 +2035,7 @@ pub async fn get_firewall_rules() -> Result<Vec<String>, String> {
     let mut rules = Vec::new();
     for line in stdout.lines() {
         if line.contains("Vigilance Block -") {
-            if let Some(ip) = line.split('-').last() {
+            if let Some(ip) = line.split('-').next_back() {
                 rules.push(ip.trim().to_string());
             }
         }
