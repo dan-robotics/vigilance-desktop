@@ -1528,7 +1528,7 @@ pub fn start_active_probe(app: AppHandle) {
                         } else if let Some(rest) = line.strip_prefix('n') {
                             if cur_pid == 0 || cur_cmd.is_empty() { continue; }
                             let local_part = rest.split("->").next().unwrap_or(rest);
-                            if let Some(port_str) = local_part.split(':').last() {
+                            if let Some(port_str) = local_part.split(':').next_back() {
                                 if let Ok(port) = port_str.parse::<u16>() {
                                     new_map.entry(port).or_insert((cur_pid, cur_cmd.clone()));
                                 }
