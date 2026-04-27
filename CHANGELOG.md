@@ -2,6 +2,15 @@
 
 # Changelog
 
+### 🔒 [3.2.0] - Security Patch - 2026-04-27
+### Security
+- **Upgraded `reqwest` 0.11 → 0.12** to pull in a fully patched TLS stack (`rustls` 0.23, `rustls-webpki` 0.103.13).
+- **Fixed RUSTSEC: rustls-webpki — DoS via panic on malformed CRL BIT STRING** (High): A crafted CRL could cause a panic in the certificate verifier. Resolved by upgrading `rustls-webpki` from `0.101.7` to `0.103.13`.
+- **Fixed RUSTSEC: webpki — Name constraints accepted for wildcard certificates** (Low): Name constraint validation incorrectly accepted wildcard DNS names. Resolved in `rustls-webpki 0.103.x`.
+- **Fixed RUSTSEC: webpki — Name constraints for URI names incorrectly accepted** (Low): URI SAN name constraints were not enforced correctly. Resolved in `rustls-webpki 0.103.x`.
+
+---
+
 ### 🚀 [3.2.0] - Stable - 2026-04-24
 ### Added
 - **TLS SNI Extraction:** Implemented manual handshake traversal to identify remote hostnames in encrypted streams.
