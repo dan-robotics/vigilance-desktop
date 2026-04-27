@@ -50,19 +50,19 @@ The OUI vendor table now covers 25+ major manufacturers (Starlink, Google, Amazo
 
 ### macOS (Universal / Silicon / Intel)
 | Architecture | Filename |
-| :--- | :--- | :--- |
-| **Universal DMG** | `Vigilance_3.2.0_universal.dmg` | ` ` |
-| **Apple Silicon** | `Vigilance_3.2.0_aarch64.dmg` | ` ` |
-| **Intel Native** | `Vigilance_3.2.0_x64.dmg` | ` ` |
-| **Universal Portable** | `Vigilance-MacOS-Universal-Portable-v3.2.0.zip` | ` ` |
+| :--- | :--- |
+| **Universal DMG** | `Vigilance_3.2.0_universal.dmg` |
+| **Apple Silicon** | `Vigilance_3.2.0_aarch64.dmg` | 
+| **Intel Native** | `Vigilance_3.2.0_x64.dmg` | 
+| **Universal Portable** | `Vigilance-MacOS-Universal-Portable-v3.2.0.zip` |
 
 
 ### Windows (Installer / Portable)
 | Architecture | Filename |
-| :--- | :--- | :--- |
-| **EXE Installer** | `vigilance_3.2.0_x64-setup.exe` | ` ` |
-| **MSI Installer** | `vigilance_3.2.0_x64_en-US.msi` | ` ` |
-| **Portable ZIP**  | `Vigilance-Portable-v3.2.0.zip` | ` ` |
+| :--- | :--- |
+| **EXE Installer** | `vigilance_3.2.0_x64-setup.exe` |
+| **MSI Installer** | `vigilance_3.2.0_x64_en-US.msi` | 
+| **Portable ZIP**  | `Vigilance-Portable-v3.2.0.zip` | 
 
 ---
 
