@@ -49,20 +49,20 @@ The OUI vendor table now covers 25+ major manufacturers (Starlink, Google, Amazo
 *To verify a download, run `shasum -a 256 [filename]` (macOS) or `Get-FileHash [filename]` (Windows).*
 
 ### macOS (Universal / Silicon / Intel)
-| Architecture | Filename | SHA-256 Checksum |
+| Architecture | Filename |
 | :--- | :--- | :--- |
-| **Universal DMG** | `Vigilance_3.2.0_universal.dmg` | `fa9832e033742394f144fe47f3c98cb7bcbb1a1e96958c5cc1cd5ff18c51c097` |
-| **Apple Silicon** | `Vigilance_3.2.0_aarch64.dmg` | `1a038707659d6216f35bdca0ac79d74a813862d97f7b3f6e1f0c9c5345c4e0f8` |
-| **Intel Native** | `Vigilance_3.2.0_x64.dmg` | `a76755063ab2b573d1e2c072e13fce8aa12bd7dd1f54cc6da532c12563f29ddc` |
-| **Universal Portable** | `Vigilance-MacOS-Universal-Portable-v3.2.0.zip` | `efe14ef783c621ad0c9ff0008048aa9cd1027ac29a4f3f8bc7537ca5b267a8b2` |
+| **Universal DMG** | `Vigilance_3.2.0_universal.dmg` |
+| **Apple Silicon** | `Vigilance_3.2.0_aarch64.dmg` |
+| **Intel Native** | `Vigilance_3.2.0_x64.dmg` |
+| **Universal Portable** | `Vigilance-MacOS-Universal-Portable-v3.2.0.zip` |
 
 
 ### Windows (Installer / Portable)
 | Architecture | Filename | SHA-256 Checksum |
 | :--- | :--- | :--- |
-| **EXE Installer** | `vigilance_3.2.0_x64-setup.exe` | `6552ADA0F2EB10ACFFEAE40B43BC30B42EB0BCC73830E4329607FA8E384D41E9` |
-| **MSI Installer** | `vigilance_3.2.0_x64_en-US.msi` | `A6BF43467AF12A15802592471D554FBC4FF33BACC6EA8EE2BB0484A53EDBE278` |
-| **Portable ZIP**  | `Vigilance-Portable-v3.2.0.zip` | `92BF465CACDC6E98C86868B55D30FA788C013E3445FE1FA2100ABD6F8C67FCBE` |
+| **EXE Installer** | `vigilance_3.2.0_x64-setup.exe` | ` ` |
+| **MSI Installer** | `vigilance_3.2.0_x64_en-US.msi` | ` ` |
+| **Portable ZIP**  | `Vigilance-Portable-v3.2.0.zip` | ` ` |
 
 ---
 
