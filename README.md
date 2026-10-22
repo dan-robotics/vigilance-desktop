@@ -76,4 +76,4 @@ For driver setup, compiler fixes, and permission troubleshooting:
 👉 [DOCS/TROUBLESHOOTING.md](./DOCS/TROUBLESHOOTING.md)
 
 ## License
-MIT License © 2026 Daniel Andries
+[MIT License ](https://github.com/dan-robotics/vigilance-desktop?tab=MIT-1-ov-file#)© 2026 Daniel Andries
