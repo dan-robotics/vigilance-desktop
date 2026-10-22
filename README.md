@@ -8,7 +8,7 @@
 # Vigilance-Desktop: Network Monitoring & Security Shield
 
 
-**Current Release: v3.2.0 Stable** — [View Changelog](./CHANGELOG.md)
+**Current Release: v3.2.1 Security Patch** (features as v3.2.0 Stable) — [View Changelog](./CHANGELOG.md)
 
 Vigilance is a high-performance, native Rust network security monitor and "Guardian" firewall. It provides deep packet inspection (DPI), heuristic threat scoring, and automated hardware fingerprinting without the overhead of a browser-based UI.
 
@@ -55,9 +55,11 @@ The OUI vendor table now covers 25+ major manufacturers (Starlink, Google, Amazo
 | Architecture | Filename |
 | :--- | :--- |
 | **Universal DMG** | `Vigilance_3.2.0_universal.dmg` |
-| **Apple Silicon** | `Vigilance_3.2.0_aarch64.dmg` | 
+| **Apple Silicon** | `vigilance_3.2.1_aarch64.dmg` (release v3.2.1) | 
 | **Intel Native** | `Vigilance_3.2.0_x64.dmg` | 
 | **Universal Portable** | `Vigilance-MacOS-Universal-Portable-v3.2.0.zip` |
+
+*v3.2.1 (security dependency updates) is published for Apple Silicon. The other macOS and Windows builds above are from release v3.2.0.*
 
 
 ### Windows (Installer / Portable)
