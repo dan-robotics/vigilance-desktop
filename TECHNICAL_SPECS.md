@@ -21,7 +21,7 @@
 ## 2. Overview
 Vigilance is a professional-grade, local-first network monitoring and security suite for Windows and macOS. It provides kernel-level packet inspection, real-time process name resolution, GeoIP enrichment, LAN device classification, and dynamic firewall management through a high-performance Rust backend and a polished React/Tauri frontend.
 
-**Current version: v3.2.0 Stable**
+**Current version: v3.2.1 Security Patch** (dependency updates; features as v3.2.0 Stable)
 
 ---
 

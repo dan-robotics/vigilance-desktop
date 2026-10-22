@@ -2,7 +2,7 @@
 
 # Changelog
 
-### 🔒 [Unreleased] - Security Patch - 2026-10-22
+### 🔒 [3.2.1] - Security Patch - 2026-10-22
 ### Security
 - **Dependency lock files updated (no source code changed).** `cargo audit` 14 → 0 vulnerabilities, `npm audit` 14 → 0.
 - **rustls 0.23.39 → 0.23.46:** fixes RUSTSEC-2026-0349 (unauthenticated ServerHello could downgrade later connections to classical key exchange), RUSTSEC-2026-0285 (TLS 1.3 handshake messages accepted across encryption levels), RUSTSEC-2026-0346 (`Debug` output exposed TLS secrets), RUSTSEC-2026-0348 (Brotli certificate decompression up to 1 GiB before authentication).
@@ -10,6 +10,7 @@
 - **quinn-proto → 0.11.18+:** fixes RUSTSEC-2026-0185 / 0338 / 0339 / 0340 / 0342 (QUIC memory exhaustion and panics).
 - **plist 1.8.0 → 1.10.3 → quick-xml 0.38.4 → 0.42.0:** fixes RUSTSEC-2026-0194 / 0195 (XML DoS). **crossbeam-epoch → 0.9.21** (RUSTSEC-2026-0204). **fastrand → 2.5.0.**
 - **npm:** `npm audit fix` (lock only), plus express 4.22.3 (qs DoS) and tsx 4.23.15 (esbuild). Covers proxy-addr, ws, protobufjs, vite, postcss, nanoid, browserslist, source-map-js, qs, body-parser, @babel/core, esbuild.
+- **Version 3.2.0 → 3.2.1** in every version field (package.json, tauri.conf.json, Cargo.toml, About dialog, bundled README). Release v3.2.1: Apple Silicon DMG; other builds remain on v3.2.0.
 - Remaining `cargo audit` warnings (not vulnerabilities): unmaintained / unsound crates pulled in by Tauri and the Linux GTK stack (fxhash, proc-macro-error, unic-*, zbus/zvariant, glib, anyhow, event-listener, rand). Cleared only by upstream Tauri updates.
 
 ---
