@@ -9,7 +9,8 @@
 - **tokio 1.52.1 → 1.54.1** (RUSTSEC-2026-0386), **serde_with 3.18.0 → 3.24.0** (GHSA-7gcf-g7xr-8hxj), **anyhow 1.0.102 → 1.0.104** (RUSTSEC-2026-0190), **event-listener 5.4.1 → 5.4.2** (RUSTSEC-2026-0221).
 - **No longer used:** fxhash and unic-* (unmaintained), rand 0.7.3 (RUSTSEC-2026-0097).
 - **npm:** body-parser 1.20.8 → 1.20.9 (GHSA-27r3-jxmh-p828).
-- **Version 3.2.1 → 3.2.2** in package.json, package-lock.json, tauri.conf.json, Cargo.toml, About dialog, bundled README. Built and tested on macOS (Apple Silicon) by Daniel; not yet published (latest download is v3.2.1).
+- **Version 3.2.1 → 3.2.2** in package.json, package-lock.json, tauri.conf.json, Cargo.toml, About dialog, bundled README. Built and tested on macOS (Apple Silicon) by Daniel. Published 2026-11-09: Apple Silicon DMG (SHA-256 `994baa8b8fd695096d6658371f4a41ae0e2285d4b7a4e75a56a1f23456eb56c4`).
+- **Release build without local paths:** built with `RUSTFLAGS="--remap-path-prefix=$HOME=~"`, so the binary no longer contains the builder's home-folder paths (3.2.1 still did, 455 times).
 - Remaining: glib 0.18.5 (Linux-only GTK stack of Tauri, not in macOS / Windows builds) and unmaintained notices for proc-macro-error / zbus / zvariant (also Linux-only). Cleared only by upstream Tauri updates.
 
 ---
