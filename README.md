@@ -8,7 +8,7 @@
 # Vigilance-Desktop: Network Monitoring & Security Shield
 
 
-**Current Release: v3.2.1 Security Patch** (features as v3.2.0 Stable) — [View Changelog](./CHANGELOG.md)
+**Current Version: v3.2.2 Security Patch** (features as v3.2.0 Stable; latest published download: v3.2.1) — [View Changelog](./CHANGELOG.md)
 
 Vigilance is a high-performance, native Rust network security monitor and "Guardian" firewall. It provides deep packet inspection (DPI), heuristic threat scoring, and automated hardware fingerprinting without the overhead of a browser-based UI.
 

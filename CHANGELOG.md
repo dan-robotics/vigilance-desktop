@@ -2,6 +2,18 @@
 
 # Changelog
 
+### 🔒 [3.2.2] - Security Patch - 2026-11-09
+### Security
+- **Dependency lock files updated (no source code changed)** with `pkgsniff fix` (compatible versions only, on branch `security/deps-2026-11-09`). pkgsniff findings 8 → 1; `cargo audit` 0 vulnerabilities.
+- **tauri 2.10.3 → 2.12.5** (tauri-runtime-wry 2.12.3, wry 0.57.1): fixes GHSA-7gmj-67g7-phm9 (origin confusion let remote pages invoke local-only IPC commands). **@tauri-apps/api + @tauri-apps/cli 2.10.1 → 2.12.4** to match.
+- **tokio 1.52.1 → 1.54.1** (RUSTSEC-2026-0386), **serde_with 3.18.0 → 3.24.0** (GHSA-7gcf-g7xr-8hxj), **anyhow 1.0.102 → 1.0.104** (RUSTSEC-2026-0190), **event-listener 5.4.1 → 5.4.2** (RUSTSEC-2026-0221).
+- **No longer used:** fxhash and unic-* (unmaintained), rand 0.7.3 (RUSTSEC-2026-0097).
+- **npm:** body-parser 1.20.8 → 1.20.9 (GHSA-27r3-jxmh-p828).
+- **Version 3.2.1 → 3.2.2** in package.json, package-lock.json, tauri.conf.json, Cargo.toml, About dialog, bundled README. Built and tested on macOS (Apple Silicon) by Daniel; not yet published (latest download is v3.2.1).
+- Remaining: glib 0.18.5 (Linux-only GTK stack of Tauri, not in macOS / Windows builds) and unmaintained notices for proc-macro-error / zbus / zvariant (also Linux-only). Cleared only by upstream Tauri updates.
+
+---
+
 ### 🔒 [3.2.1] - Security Patch - 2026-10-22
 ### Security
 - **Dependency lock files updated (no source code changed).** `cargo audit` 14 → 0 vulnerabilities, `npm audit` 14 → 0.
